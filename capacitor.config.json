@@ -1,0 +1,10 @@
+{
+  "appId": "com.wordmem.app",
+  "appName": "WordMem",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "http",
+    "cleartext": true
+  }
+}

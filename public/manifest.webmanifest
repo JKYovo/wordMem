@@ -1,0 +1,79 @@
+{
+  "id": "/?source=pwa",
+  "name": "WordMem 工作术语卡片",
+  "short_name": "WordMem",
+  "description": "记录工作中遇到的英文术语、专业概念和 AI 解释。",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui", "browser"],
+  "orientation": "portrait",
+  "background_color": "#f8faf8",
+  "theme_color": "#f8faf8",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/maskable-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icons/maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "新卡片",
+      "short_name": "新卡片",
+      "description": "打开 WordMem 并准备记录新术语。",
+      "url": "/?action=new",
+      "icons": [
+        {
+          "src": "/icons/shortcut-new.svg",
+          "sizes": "any",
+          "type": "image/svg+xml"
+        }
+      ]
+    },
+    {
+      "name": "词库",
+      "short_name": "词库",
+      "description": "打开 WordMem 词库。",
+      "url": "/?pane=library",
+      "icons": [
+        {
+          "src": "/icons/shortcut-library.svg",
+          "sizes": "any",
+          "type": "image/svg+xml"
+        }
+      ]
+    }
+  ]
+}

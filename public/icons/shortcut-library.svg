@@ -1,0 +1,5 @@
+<svg width="96" height="96" viewBox="0 0 96 96" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="词库">
+  <rect width="96" height="96" rx="22" fill="#f8faf8"/>
+  <path d="M25 22h34a12 12 0 0 1 12 12v40H37a12 12 0 0 1-12-12V22Z" fill="#0f766e"/>
+  <path d="M36 39h24M36 53h18" stroke="#f8faf8" stroke-width="7" stroke-linecap="round"/>
+</svg>

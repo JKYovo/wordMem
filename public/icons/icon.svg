@@ -1,0 +1,7 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="WordMem">
+  <rect width="512" height="512" rx="112" fill="#f8faf8"/>
+  <rect x="108" y="92" width="296" height="328" rx="42" fill="#0f766e"/>
+  <path d="M144 142a34 34 0 0 1 34-34h190v74H178a40 40 0 0 1-34-40Z" fill="#f8faf8"/>
+  <path d="M184 242h148M184 300h112M184 358h160" stroke="#f8faf8" stroke-width="32" stroke-linecap="round"/>
+  <circle cx="370" cy="124" r="18" fill="#f8faf8"/>
+</svg>

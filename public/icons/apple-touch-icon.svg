@@ -1,0 +1,6 @@
+<svg width="180" height="180" viewBox="0 0 180 180" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="WordMem">
+  <rect width="180" height="180" rx="40" fill="#f8faf8"/>
+  <rect x="39" y="32" width="102" height="116" rx="16" fill="#0f766e"/>
+  <path d="M52 50a13 13 0 0 1 13-13h64v27H65a15 15 0 0 1-13-14Z" fill="#f8faf8"/>
+  <path d="M67 87h50M67 108h38M67 129h55" stroke="#f8faf8" stroke-width="11" stroke-linecap="round"/>
+</svg>

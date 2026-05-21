@@ -1,0 +1,6 @@
+<svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="WordMem">
+  <rect width="64" height="64" rx="14" fill="#f8faf8"/>
+  <path d="M15 18a6 6 0 0 1 6-6h24a4 4 0 0 1 4 4v32a4 4 0 0 1-4 4H21a6 6 0 0 1-6-6V18Z" fill="#0f766e"/>
+  <path d="M21 17h22v7H21a4 4 0 0 1 0-7Z" fill="#f8faf8"/>
+  <path d="M24 31h16M24 38h12M24 45h18" stroke="#f8faf8" stroke-width="4" stroke-linecap="round"/>
+</svg>

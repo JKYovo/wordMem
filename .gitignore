@@ -1,0 +1,22 @@
+.env
+.env.local
+/dist/
+/node_modules/
+/data/
+
+# Local Android / Gradle state
+android/local.properties
+android/.gradle/
+android/build/
+android/app/build/
+*.apk
+*.aab
+*.jks
+*.keystore
+
+# OS / editor noise
+.DS_Store
+*.log
+
+# Personal deployment notes
+SERVER_TAILSCALE.md
