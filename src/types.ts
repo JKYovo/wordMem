@@ -1,7 +1,13 @@
 export type AiProviderId = "openai" | "deepseek" | "bxi" | "custom";
 export type WireApi = "responses" | "chat_completions";
 export type ReasoningEffort = "none" | "low" | "medium" | "high" | "xhigh";
-export type AiTaskType = "explain" | "review" | "summarize" | "tag" | "memory_profile";
+export type AiTaskType =
+  | "explain"
+  | "review"
+  | "summarize"
+  | "tag"
+  | "tag_merge"
+  | "memory_profile";
 export type UsageStatus = "success" | "failed" | "blocked";
 
 export type KnowledgeCard = {
@@ -105,6 +111,12 @@ export type AiExplainResult = {
   structuredDraft?: StructuredDraft;
   providerId: AiProviderId;
   model: string;
+  usage?: {
+    inputTokens: number;
+    outputTokens: number;
+    source: "provider" | "estimate";
+  };
+  durationMs?: number;
 };
 
 export type UsageRecord = {
@@ -118,6 +130,8 @@ export type UsageRecord = {
   inputTokens: number;
   outputTokens: number;
   estimatedCostUsd?: number;
+  usageSource?: "provider" | "estimate";
+  durationMs?: number;
   status: UsageStatus;
   routeReason?: string;
   error?: string;

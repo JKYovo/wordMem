@@ -1,5 +1,4 @@
 import {
-  BarChart3,
   BookOpen,
   Brain,
   ChevronDown,
@@ -69,10 +68,11 @@ import {
 import { buildExport, buildUsageExport, downloadJson, parseImportedCards } from "./importExport";
 import { collectTags, searchCards } from "./search";
 import { findRelatedMemoryCards, memoryHint } from "./memory";
+import { buildKnowledgeViews, findRelatedCards } from "./knowledge";
 import {
   budgetDateKey,
-  estimateActualCost,
   estimateAiRequest,
+  estimateCostFromTokens,
   estimateTokens,
   formatUsd,
   getBudgetSummary,
@@ -80,7 +80,6 @@ import {
   routeProviderForTask,
   taskLabel,
   usageRecordCost,
-  validateBudgetForRequest,
 } from "./budget";
 import type {
   AiExplainRequest,
@@ -95,8 +94,10 @@ import type {
 } from "./types";
 
 type View = "library" | "settings";
+type LibraryMode = "views" | "all";
 type EditorMode = "edit" | "preview";
 type MobilePane = "detail" | "library";
+type AiActionKind = "quick" | "polish" | "review_section" | "review_full" | "tag";
 type AiRouteDisplay = {
   providerId: AiProviderId;
   providerLabel: string;
@@ -109,6 +110,7 @@ type MarkdownSection = {
   content: string;
   defaultOpen: boolean;
 };
+type TagAliasMap = Record<string, string>;
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>;
   userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
@@ -118,6 +120,31 @@ const providerOrder: AiProviderId[] = ["openai", "deepseek", "bxi", "custom"];
 const reasoningEfforts: ReasoningEffort[] = ["none", "low", "medium", "high", "xhigh"];
 const CUSTOM_MODEL_VALUE = "__custom_model__";
 const INSTALL_HINT_DISMISSED_KEY = "wordmem-install-hint-dismissed";
+const AUTO_CLASSIFY_PROVIDER_ID: AiProviderId = "deepseek";
+const PREFERRED_TAG_ORDER = [
+  "深度学习",
+  "机器学习",
+  "强化学习",
+  "PPO",
+  "policy",
+  "rollout",
+  "机器人控制",
+  "运动控制",
+  "仿真评测",
+  "GMR",
+  "motion retargeting",
+  "数学基础",
+  "优化算法",
+  "debug",
+];
+const PROTECTED_DISTINCT_TAGS = new Set([
+  "PPO",
+  "GMR",
+  "policy",
+  "rollout",
+  "debug",
+  "MuJoCo",
+]);
 
 function hasMobilePreviewParam() {
   if (typeof window === "undefined") {
@@ -175,6 +202,37 @@ function normalizeTags(value: string) {
     .split(/[,，;；\n]/)
     .map((tag) => tag.trim())
     .filter(Boolean);
+}
+
+function cleanPronunciation(value: string | undefined) {
+  const text = String(value || "").trim();
+  if (!text) {
+    return "";
+  }
+  const placeholderPattern =
+    /^\/?\s*(ipa|i\.p\.a\.|pronunciation|phonetic|音标|读音)\s*\/?$/i;
+  if (placeholderPattern.test(text)) {
+    return "";
+  }
+
+  const slashMatch = text.match(/\/\s*([^/，,;；()（）]{1,80})\s*(?:\/|$)/);
+  if (slashMatch) {
+    const inner = slashMatch[1].trim();
+    return placeholderPattern.test(inner) ? "" : `/${inner}/`;
+  }
+
+  const bracketMatch = text.match(/\[\s*([^\]，,;；()（）]{1,80})\s*\]/);
+  if (bracketMatch) {
+    const inner = bracketMatch[1].trim();
+    return placeholderPattern.test(inner) ? "" : `/${inner}/`;
+  }
+
+  const cleaned = text
+    .replace(/（?近似读音[:：]?.*$/i, "")
+    .replace(/\(?近似读音[:：]?.*$/i, "")
+    .replace(/[，,;；].*$/, "")
+    .trim();
+  return placeholderPattern.test(cleaned) ? "" : cleaned;
 }
 
 function wireApiLabel(wireApi: WireApi) {
@@ -237,8 +295,18 @@ function toDisplayMathBlock(indent: string, formula: string) {
   return `${indent}$$\n${formula.trim()}\n${indent}$$`;
 }
 
-function normalizeStandaloneMath(body: string) {
+function normalizeMathDelimiters(body: string) {
   return body
+    .replace(/\\\[\s*([\s\S]+?)\s*\\\]/g, (_match, formula: string) =>
+      `$$\n${formula.trim()}\n$$`
+    )
+    .replace(/\\\(\s*([^\n]+?)\s*\\\)/g, (_match, formula: string) =>
+      `$${formula.trim()}$`
+    );
+}
+
+function normalizeStandaloneMath(body: string) {
+  return normalizeMathDelimiters(body)
     .split("\n")
     .map((line) => {
       const blockMatch = line.match(/^(\s*)\$\$\s*([^$\n]+?)\s*\$\$(\s*)$/);
@@ -360,7 +428,9 @@ function buildDraftFromAi(
   return {
     ...card,
     term: structuredDraft?.term || card.term,
-    pronunciation: structuredDraft?.pronunciation || card.pronunciation,
+    pronunciation:
+      cleanPronunciation(structuredDraft?.pronunciation) ||
+      cleanPronunciation(card.pronunciation),
     sourceContext: structuredDraft?.sourceContext || card.sourceContext,
     body: body || card.body,
     tags: nextTags,
@@ -374,10 +444,12 @@ function MarkdownPreview({
   body,
   compactSections = false,
   searchQuery = "",
+  onSectionFocus,
 }: {
   body: string;
   compactSections?: boolean;
   searchQuery?: string;
+  onSectionFocus?: (sectionId: string) => void;
 }) {
   const normalizedBody = useMemo(
     () => normalizeStandaloneMath(unwrapAiWrappedBody(body)),
@@ -482,12 +554,13 @@ function MarkdownPreview({
               <button
                 type="button"
                 className="markdown-section-toggle"
-                onClick={() =>
+                onClick={() => {
+                  onSectionFocus?.(section.id);
                   setOpenSections((current) => ({
                     ...current,
                     [section.id]: !isOpen,
-                  }))
-                }
+                  }));
+                }}
                 aria-expanded={isOpen}
               >
                 {isOpen ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
@@ -495,14 +568,16 @@ function MarkdownPreview({
               </button>
 
               {isOpen && (
-                <ReactMarkdown
-                  className="markdown-section-body"
-                  remarkPlugins={[remarkGfm, remarkMath]}
-                  rehypePlugins={[rehypeRaw, rehypeKatex]}
-                  components={markdownComponents}
-                >
-                  {section.content || " "}
-                </ReactMarkdown>
+                <div onClick={() => onSectionFocus?.(section.id)}>
+                  <ReactMarkdown
+                    className="markdown-section-body"
+                    remarkPlugins={[remarkGfm, remarkMath]}
+                    rehypePlugins={[rehypeRaw, rehypeKatex]}
+                    components={markdownComponents}
+                  >
+                    {section.content || " "}
+                  </ReactMarkdown>
+                </div>
               )}
             </section>
           );
@@ -541,6 +616,270 @@ function modelRouteText(route: AiRouteDisplay, includeTask = false) {
   return `${prefix}${route.providerLabel} / ${route.model}`;
 }
 
+function stripLeadingSectionHeading(body: string, title: string) {
+  const escapedTitle = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return body
+    .replace(new RegExp(`^\\s*##\\s+${escapedTitle}\\s*\\n+`, "i"), "")
+    .trim();
+}
+
+function sectionForReview(body: string, activeSectionId: string) {
+  const parsed = splitMarkdownSections(normalizeStandaloneMath(unwrapAiWrappedBody(body)));
+  const selected =
+    parsed.sections.find((section) => section.id === activeSectionId) ||
+    parsed.sections.find((section) => section.defaultOpen) ||
+    parsed.sections[0] ||
+    (parsed.intro
+      ? {
+          id: "intro",
+          title: "正文开头",
+          content: parsed.intro,
+          defaultOpen: true,
+        }
+      : undefined);
+
+  return {
+    parsed,
+    selected,
+  };
+}
+
+function replaceMarkdownSection(
+  body: string,
+  targetSection: MarkdownSection,
+  nextSectionBody: string
+) {
+  const parsed = splitMarkdownSections(normalizeStandaloneMath(unwrapAiWrappedBody(body)));
+  const cleanedNextBody = stripLeadingSectionHeading(
+    normalizeStandaloneMath(unwrapAiWrappedBody(nextSectionBody)),
+    targetSection.title
+  );
+  if (targetSection.id === "intro" && !parsed.sections.length) {
+    return cleanedNextBody;
+  }
+  const sectionBlocks = parsed.sections.map((section) => {
+    const content = section.id === targetSection.id ? cleanedNextBody : section.content;
+    return `## ${section.title}\n\n${content}`.trim();
+  });
+
+  const intro = targetSection.id === "intro" ? cleanedNextBody : parsed.intro;
+  return [intro, ...sectionBlocks].filter(Boolean).join("\n\n").trim();
+}
+
+function aiActionLabel(action: AiActionKind) {
+  if (action === "quick") {
+    return "快速解释";
+  }
+  if (action === "polish") {
+    return "高质量整理";
+  }
+  if (action === "review_section") {
+    return "专家审阅当前段落";
+  }
+  if (action === "review_full") {
+    return "专家审阅全文";
+  }
+  return "补标签和相关词";
+}
+
+function canonicalTag(tag: string) {
+  const normalized = normalizeTagKey(tag);
+  const map: Record<string, string> = {
+    dl: "深度学习",
+    "deep learning": "深度学习",
+    深度学习: "深度学习",
+    ml: "机器学习",
+    "machine learning": "机器学习",
+    机器学习: "机器学习",
+    rl: "强化学习",
+    "reinforcement learning": "强化学习",
+    强化学习: "强化学习",
+    robotics: "机器人控制",
+    robot: "机器人控制",
+    "robot control": "机器人控制",
+    "robotics control": "机器人控制",
+    机器人: "机器人控制",
+    机器人控制: "机器人控制",
+    机器人运动控制: "机器人控制",
+    simulation: "仿真评测",
+    eval: "仿真评测",
+    evaluation: "仿真评测",
+    仿真: "仿真评测",
+    评测: "仿真评测",
+    仿真评测: "仿真评测",
+    retargeting: "motion retargeting",
+    "motion retargeting": "motion retargeting",
+    重定向: "motion retargeting",
+    gmr: "GMR",
+    ppo: "PPO",
+    policy: "policy",
+    rollout: "rollout",
+    debug: "debug",
+  };
+
+  return map[normalized] || tag.trim();
+}
+
+function normalizeTagKey(tag: string) {
+  return tag.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function isAllCapsTag(tag: string) {
+  return /^[A-Z0-9][A-Z0-9.+#-]{1,9}$/.test(tag.trim());
+}
+
+function safeAliasTarget(target: string) {
+  const canonical = canonicalTag(target).trim();
+  if (!canonical || canonical.length > 36 || /[,，;；/、\n]/.test(canonical)) {
+    return "";
+  }
+  return canonical;
+}
+
+function shouldAcceptAlias(source: string, target: string) {
+  const sourceCanonical = canonicalTag(source);
+  const targetCanonical = safeAliasTarget(target);
+  if (!sourceCanonical || !targetCanonical) {
+    return false;
+  }
+  if (normalizeTagKey(sourceCanonical) === normalizeTagKey(targetCanonical)) {
+    return true;
+  }
+  if (PROTECTED_DISTINCT_TAGS.has(sourceCanonical)) {
+    return false;
+  }
+  if (
+    isAllCapsTag(sourceCanonical) &&
+    ["深度学习", "机器学习", "强化学习", "机器人控制", "仿真评测"].includes(targetCanonical)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function parseTagAliasMap(rawAnswer: string) {
+  const withoutFence = rawAnswer
+    .trim()
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/```$/i, "")
+    .trim();
+  const firstBrace = withoutFence.indexOf("{");
+  const lastBrace = withoutFence.lastIndexOf("}");
+  const jsonText =
+    firstBrace >= 0 && lastBrace > firstBrace
+      ? withoutFence.slice(firstBrace, lastBrace + 1)
+      : withoutFence;
+
+  try {
+    const parsed = JSON.parse(jsonText);
+    const aliases = parsed?.aliases && typeof parsed.aliases === "object" ? parsed.aliases : parsed;
+    const nextAliases: TagAliasMap = {};
+    Object.entries(aliases || {}).forEach(([source, target]) => {
+      if (typeof target !== "string") {
+        return;
+      }
+      if (!shouldAcceptAlias(source, target)) {
+        return;
+      }
+      const canonicalSource = canonicalTag(source);
+      const canonicalTarget = safeAliasTarget(target);
+      if (canonicalSource && canonicalTarget) {
+        nextAliases[normalizeTagKey(source)] = canonicalTarget;
+        nextAliases[normalizeTagKey(canonicalSource)] = canonicalTarget;
+      }
+    });
+    return nextAliases;
+  } catch {
+    throw new Error("模型没有返回可识别的标签别名 JSON。");
+  }
+}
+
+function sortTags(tags: string[]) {
+  return [...tags].sort((left, right) => {
+    const leftIndex = PREFERRED_TAG_ORDER.indexOf(left);
+    const rightIndex = PREFERRED_TAG_ORDER.indexOf(right);
+    if (leftIndex >= 0 || rightIndex >= 0) {
+      return (leftIndex >= 0 ? leftIndex : 999) - (rightIndex >= 0 ? rightIndex : 999);
+    }
+    return left.localeCompare(right);
+  });
+}
+
+function mergeExistingTags(existingTags: string[], aliasMap: TagAliasMap = {}) {
+  const unique = new Map<string, string>();
+  existingTags.forEach((tag) => {
+    const localCanonical = canonicalTag(tag);
+    const aliased =
+      aliasMap[normalizeTagKey(tag)] ||
+      aliasMap[normalizeTagKey(localCanonical)] ||
+      localCanonical;
+    const target = safeAliasTarget(aliased);
+    if (target) {
+      unique.set(normalizeTagKey(target), target);
+    }
+  });
+  return sortTags(Array.from(unique.values()));
+}
+
+function sameTagList(left: string[], right: string[]) {
+  return left.length === right.length && left.every((tag, index) => tag === right[index]);
+}
+
+function buildTagMergeInventory(cards: KnowledgeCard[]) {
+  const inventory = new Map<string, { tag: string; terms: string[] }>();
+  cards.forEach((card) => {
+    card.tags.forEach((tag) => {
+      const trimmed = tag.trim();
+      if (!trimmed) {
+        return;
+      }
+      const key = normalizeTagKey(trimmed);
+      const item = inventory.get(key) || { tag: trimmed, terms: [] };
+      if (card.term.trim() && item.terms.length < 3 && !item.terms.includes(card.term.trim())) {
+        item.terms.push(card.term.trim());
+      }
+      inventory.set(key, item);
+    });
+  });
+
+  return Array.from(inventory.values()).sort((left, right) => left.tag.localeCompare(right.tag));
+}
+
+function applyTagAliasesToCards(cards: KnowledgeCard[], aliasMap: TagAliasMap = {}) {
+  return cards
+    .map((card) => {
+      const nextTags = mergeExistingTags(card.tags, aliasMap);
+      if (sameTagList(card.tags, nextTags)) {
+        return null;
+      }
+      return normalizeKnowledgeCard({
+        ...card,
+        tags: nextTags,
+        updatedAt: nowIso(),
+      });
+    })
+    .filter((card): card is KnowledgeCard => Boolean(card));
+}
+
+function preferredActionModel(provider: ProviderConfig, preference: "balanced" | "cheap" | "frontier") {
+  const models = Array.from(new Set([provider.defaultModel, ...provider.models].filter(Boolean)));
+  const candidates =
+    preference === "cheap"
+      ? provider.id === "deepseek"
+        ? ["deepseek-v4-flash", "deepseek-chat"]
+        : ["gpt-5.4-mini", "gpt-5-mini", "gpt-4o-mini"]
+      : preference === "frontier"
+        ? provider.id === "deepseek"
+          ? ["deepseek-v4-pro", "deepseek-reasoner", "deepseek-v4-flash"]
+          : ["gpt-5.5", "gpt-5.5-pro", "gpt-5.4"]
+        : provider.id === "deepseek"
+          ? ["deepseek-v4-pro", "deepseek-reasoner", "deepseek-v4-flash"]
+          : ["gpt-5.4", "gpt-5", "gpt-4.1", "gpt-5.4-mini"];
+
+  return candidates.find((model) => models.includes(model)) || provider.defaultModel;
+}
+
 function App() {
   const forceMobilePreview = useMemo(() => hasMobilePreviewParam(), []);
   const [cards, setCards] = useState<KnowledgeCard[]>([]);
@@ -551,9 +890,13 @@ function App() {
   const [query, setQuery] = useState("");
   const [activeTag, setActiveTag] = useState("");
   const [view, setView] = useState<View>("library");
+  const [libraryMode, setLibraryMode] = useState<LibraryMode>("views");
+  const [activeKnowledgeViewId, setActiveKnowledgeViewId] = useState("");
   const [editorMode, setEditorMode] = useState<EditorMode>("edit");
   const [mobilePane, setMobilePane] = useState<MobilePane>("detail");
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
+  const [mobileAiOpen, setMobileAiOpen] = useState(false);
+  const [activeSectionId, setActiveSectionId] = useState("");
   const [mobileLayout, setMobileLayout] = useState(() =>
     isMobileLayoutPreferred(forceMobilePreview)
   );
@@ -571,10 +914,10 @@ function App() {
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [memoryStatus, setMemoryStatus] = useState("");
-  const [budgetStatus, setBudgetStatus] = useState("");
   const [aiRouteDisplay, setAiRouteDisplay] = useState<AiRouteDisplay | null>(null);
   const [syncStatus, setSyncStatus] = useState("");
   const importInputRef = useRef<HTMLInputElement | null>(null);
+  const aiAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     const mediaQuery = window.matchMedia("(max-width: 860px), (pointer: coarse)");
@@ -773,10 +1116,42 @@ function App() {
     }
   }, [draft.id, draft.body]);
 
-  const tags = useMemo(() => collectTags(cards), [cards]);
+  useEffect(() => {
+    const cleanedPronunciation = cleanPronunciation(draft.pronunciation);
+    if (draft.pronunciation && cleanedPronunciation !== draft.pronunciation) {
+      setDraft((current) =>
+        current.id === draft.id
+          ? {
+              ...current,
+              pronunciation: cleanedPronunciation,
+            }
+          : current
+      );
+    }
+  }, [draft.id, draft.pronunciation]);
+
+  const knowledgeViews = useMemo(() => buildKnowledgeViews(cards), [cards]);
+  const activeKnowledgeView = useMemo(() => {
+    if (libraryMode !== "views") {
+      return undefined;
+    }
+    return (
+      knowledgeViews.find((knowledgeView) => knowledgeView.id === activeKnowledgeViewId) ||
+      knowledgeViews[0]
+    );
+  }, [activeKnowledgeViewId, knowledgeViews, libraryMode]);
+  const libraryCards = useMemo(
+    () => (libraryMode === "views" && activeKnowledgeView ? activeKnowledgeView.cards : cards),
+    [activeKnowledgeView, cards, libraryMode]
+  );
+  const tags = useMemo(() => collectTags(libraryCards), [libraryCards]);
   const filteredCards = useMemo(
-    () => searchCards(cards, query, activeTag),
-    [cards, query, activeTag]
+    () => searchCards(libraryCards, query, activeTag),
+    [activeTag, libraryCards, query]
+  );
+  const relatedCards = useMemo(
+    () => findRelatedCards(draft, cards, 5),
+    [cards, draft]
   );
   const activeProvider = settings ? settings.providers[settings.activeProvider] : null;
   const shownProvider = draft.providerId && settings ? settings.providers[draft.providerId] : null;
@@ -847,10 +1222,11 @@ function App() {
     setEditorMode("preview");
     setMobilePane("detail");
     setMobileMoreOpen(false);
+    setMobileAiOpen(false);
+    setActiveSectionId("");
     setStatus("");
     setError("");
     setMemoryStatus("");
-    setBudgetStatus("");
     setAiRouteDisplay(null);
   }
 
@@ -861,10 +1237,11 @@ function App() {
     setEditorMode("edit");
     setMobilePane("detail");
     setMobileMoreOpen(false);
+    setMobileAiOpen(false);
+    setActiveSectionId("");
     setStatus("已准备一张新卡片。");
     setError("");
     setMemoryStatus("");
-    setBudgetStatus("");
     setAiRouteDisplay(null);
     setView("library");
   }
@@ -872,30 +1249,60 @@ function App() {
   function showMobileLibrary() {
     setMobilePane("library");
     setMobileMoreOpen(false);
+    setMobileAiOpen(false);
   }
 
   function showMobileDetail() {
     setMobilePane("detail");
     setMobileMoreOpen(false);
+    setMobileAiOpen(false);
+  }
+
+  function showAllLibraryCards() {
+    setLibraryMode("all");
+    setActiveTag("");
+  }
+
+  function selectKnowledgeView(viewId: string) {
+    setLibraryMode("views");
+    setActiveKnowledgeViewId(viewId);
+    setActiveTag("");
   }
 
   function toggleEditorMode() {
     setEditorMode((current) => (current === "edit" ? "preview" : "edit"));
     setMobileMoreOpen(false);
+    setMobileAiOpen(false);
+  }
+
+  function toggleMobileAiPanel() {
+    setMobileAiOpen((current) => !current);
+    setMobileMoreOpen(false);
+  }
+
+  function cancelAiRequest() {
+    aiAbortRef.current?.abort();
+    aiAbortRef.current = null;
+    setAiBusy(false);
+    setStatus("已取消本次 AI 请求；当前正文没有被覆盖。");
+    setError("");
   }
 
   function openModelSettings() {
     setMobileMoreOpen(false);
+    setMobileAiOpen(false);
     setView("settings");
   }
 
   function openImportPicker() {
     setMobileMoreOpen(false);
+    setMobileAiOpen(false);
     importInputRef.current?.click();
   }
 
   function exportFromMobileMenu() {
     setMobileMoreOpen(false);
+    setMobileAiOpen(false);
     handleExport();
   }
 
@@ -935,6 +1342,7 @@ function App() {
       ...draft,
       term,
       body,
+      pronunciation: cleanPronunciation(draft.pronunciation),
       tags: draft.tags.map((tag) => tag.trim()).filter(Boolean),
       updatedAt: stamp,
       createdAt: draft.createdAt || stamp,
@@ -1039,12 +1447,13 @@ function App() {
   function buildAiRequestForCard(
     card: KnowledgeCard,
     taskType: AiTaskType,
-    relatedCards = settings?.memoryEnabled ? findRelatedMemoryCards(card, cards, 3) : []
+    relatedCards = settings?.memoryEnabled ? findRelatedMemoryCards(card, cards, 3) : [],
+    pastedRawAnswer = card.body
   ): AiExplainRequest {
     return {
       term: card.term,
       sourceContext: card.sourceContext,
-      pastedRawAnswer: card.body,
+      pastedRawAnswer,
       taskType,
       memoryContext: settings?.memoryEnabled
         ? {
@@ -1055,7 +1464,18 @@ function App() {
     };
   }
 
-  async function runAiTaskForCard(card: KnowledgeCard, taskType: AiTaskType) {
+  async function runAiTaskForCard(
+    card: KnowledgeCard,
+    taskType: AiTaskType,
+    options: {
+      signal?: AbortSignal;
+      pastedRawAnswer?: string;
+      forceEconomy?: boolean;
+      statusLabel?: string;
+      modelPreference?: "balanced" | "cheap" | "frontier";
+      providerId?: AiProviderId;
+    } = {}
+  ) {
     if (!settings) {
       throw new Error("设置还没有加载完成。");
     }
@@ -1067,12 +1487,35 @@ function App() {
     const relatedCards = settings.memoryEnabled
       ? findRelatedMemoryCards(card, cards, 3)
       : [];
-    const request = buildAiRequestForCard(card, taskType, relatedCards);
-    const latestUsageRecords = await listUsageRecords();
-    const summary = getBudgetSummary(settings, latestUsageRecords);
-    const routed = routeProviderForTask(settings, request, summary.economyMode);
+    const request = buildAiRequestForCard(
+      card,
+      taskType,
+      relatedCards,
+      options.pastedRawAnswer ?? card.body
+    );
+    const routeSettings =
+      options.providerId && settings.providers[options.providerId]
+        ? {
+            ...settings,
+            activeProvider: options.providerId,
+          }
+        : settings;
+    let routed = routeProviderForTask(
+      routeSettings,
+      request,
+      Boolean(options.forceEconomy)
+    );
+    if (options.modelPreference) {
+      routed = {
+        ...routed,
+        provider: {
+          ...routed.provider,
+          defaultModel: preferredActionModel(routed.provider, options.modelPreference),
+        },
+        routeReason: `${routed.routeReason} / ${options.modelPreference}`,
+      };
+    }
     const estimate = estimateAiRequest(routed.provider, request);
-    const blockedReason = validateBudgetForRequest(settings, summary, estimate);
     const dateKey = budgetDateKey();
     const routedDisplay: AiRouteDisplay = {
       providerId: routed.providerId,
@@ -1081,8 +1524,63 @@ function App() {
       taskType,
     };
     setAiRouteDisplay(routedDisplay);
+    setStatus(
+      `正在用 ${modelRouteText(routedDisplay)} ${
+        options.statusLabel ||
+        (taskType === "review" ? "专家审阅" : taskType === "summarize" ? "后台整理" : "解释/整理")
+      }...`
+    );
 
-    if (blockedReason) {
+    const startedAt = performance.now();
+    try {
+      const result = await explainWithActiveProvider(settings, request, routed.provider, {
+        signal: options.signal,
+      });
+      const actualDisplay: AiRouteDisplay = {
+        providerId: routed.providerId,
+        providerLabel: routed.provider.label,
+        model: result.model,
+        taskType,
+      };
+      setAiRouteDisplay(actualDisplay);
+      const inputTokens = result.usage?.inputTokens || estimate.inputTokens;
+      const outputTokens = result.usage?.outputTokens || estimateTokens(result.rawAnswer);
+      const usageSource = result.usage?.source || "estimate";
+      const durationMs = result.durationMs || Math.round(performance.now() - startedAt);
+      const nextCard = buildDraftFromAi(card, result);
+      await persistUsageRecord({
+        id: createId("usage"),
+        dateKey,
+        createdAt: nowIso(),
+        providerId: routed.providerId,
+        providerLabel: routed.provider.label,
+        model: result.model,
+        taskType,
+        inputTokens,
+        outputTokens,
+        estimatedCostUsd: estimateCostFromTokens(
+          {
+            ...routed.provider,
+            defaultModel: result.model,
+          },
+          inputTokens,
+          outputTokens
+        ),
+        usageSource,
+        durationMs,
+        status: "success",
+        routeReason: routed.routeReason,
+      });
+
+      return {
+        nextCard,
+        memoryStatus: memoryHint(relatedCards, settings.memoryEnabled),
+        routed,
+      };
+    } catch (aiError) {
+      const aborted =
+        (aiError instanceof DOMException && aiError.name === "AbortError") ||
+        (aiError instanceof Error && /abort/i.test(aiError.name || aiError.message));
       await persistUsageRecord({
         id: createId("usage"),
         dateKey,
@@ -1094,81 +1592,19 @@ function App() {
         inputTokens: estimate.inputTokens,
         outputTokens: 0,
         estimatedCostUsd: estimate.estimatedCostUsd,
-        status: "blocked",
-        routeReason: routed.routeReason,
-        error: blockedReason,
-      });
-      throw new Error(blockedReason);
-    }
-
-    const estimateText =
-      estimate.estimatedCostUsd === undefined
-        ? "费用未知，请在 provider 高级设置里填单价后才能做美元预算拦截。"
-        : `预计 $${formatUsd(estimate.estimatedCostUsd)}，今日已用 $${formatUsd(
-            summary.knownSpendUsd
-          )} / $${formatUsd(summary.wordMemDailyBudgetUsd)}。`;
-    setBudgetStatus(
-      `${modelRouteText(routedDisplay, true)}。${estimateText}`
-    );
-    setStatus(
-      `正在用 ${modelRouteText(routedDisplay)} ${
-        taskType === "review" ? "专家审阅" : taskType === "summarize" ? "后台整理" : "解释/整理"
-      }...`
-    );
-
-    try {
-      const result = await explainWithActiveProvider(settings, request, routed.provider);
-      const actualDisplay: AiRouteDisplay = {
-        providerId: routed.providerId,
-        providerLabel: routed.provider.label,
-        model: result.model,
-        taskType,
-      };
-      setAiRouteDisplay(actualDisplay);
-      const outputTokens = estimateTokens(result.rawAnswer);
-      const nextCard = buildDraftFromAi(card, result);
-      await persistUsageRecord({
-        id: createId("usage"),
-        dateKey,
-        createdAt: nowIso(),
-        providerId: routed.providerId,
-        providerLabel: routed.provider.label,
-        model: result.model,
-        taskType,
-        inputTokens: estimate.inputTokens,
-        outputTokens,
-        estimatedCostUsd: estimateActualCost(
-          {
-            ...routed.provider,
-            defaultModel: result.model,
-          },
-          estimate.inputTokens,
-          result.rawAnswer
-        ),
-        status: "success",
-        routeReason: routed.routeReason,
-      });
-
-      return {
-        nextCard,
-        memoryStatus: memoryHint(relatedCards, settings.memoryEnabled),
-        routed,
-      };
-    } catch (aiError) {
-      await persistUsageRecord({
-        id: createId("usage"),
-        dateKey,
-        createdAt: nowIso(),
-        providerId: routed.providerId,
-        providerLabel: routed.provider.label,
-        model: routed.provider.defaultModel,
-        taskType,
-        inputTokens: estimate.inputTokens,
-        outputTokens: 0,
+        usageSource: "estimate",
+        durationMs: Math.round(performance.now() - startedAt),
         status: "failed",
         routeReason: routed.routeReason,
-        error: aiError instanceof Error ? aiError.message : "AI 请求失败。",
+        error: aborted
+          ? "用户取消了本次请求。"
+          : aiError instanceof Error
+            ? aiError.message
+            : "AI 请求失败。",
       });
+      if (aborted) {
+        throw new Error("AI 请求已取消，当前正文没有被覆盖。");
+      }
       throw aiError;
     }
   }
@@ -1177,6 +1613,9 @@ function App() {
     setAiBusy(true);
     setError("");
     setAiRouteDisplay(null);
+    setMobileAiOpen(false);
+    const controller = new AbortController();
+    aiAbortRef.current = controller;
 
     const relatedCards = settings?.memoryEnabled
       ? findRelatedMemoryCards(draft, cards, 3)
@@ -1186,22 +1625,33 @@ function App() {
     setStatus(`正在准备 AI 请求... ${nextMemoryStatus}`);
 
     try {
-      const result = await runAiTaskForCard(draft, "explain");
+      const result = await runAiTaskForCard(draft, "explain", {
+        signal: controller.signal,
+      });
       setDraft(cloneCard(result.nextCard));
       setEditorMode("preview");
       setStatus(
         `AI 已写入正文，确认后保存。${result.memoryStatus ? ` ${result.memoryStatus}` : ""}`
       );
     } catch (aiError) {
+      const message = aiError instanceof Error ? aiError.message : "AI 请求失败。";
+      if (message.includes("已取消")) {
+        setStatus(message);
+        setError("");
+        return;
+      }
       const hint = isFetchLikeError(aiError)
         ? "请求没有完成，请确认本地 AI 代理正在运行；使用 npm run dev 会同时启动前端和代理。"
         : "";
       setError(
-        `${aiError instanceof Error ? aiError.message : "AI 请求失败。"}${hint ? ` ${hint}` : ""}`
+        `${message}${hint ? ` ${hint}` : ""}`
       );
       setStatus("");
     } finally {
       setAiBusy(false);
+      if (aiAbortRef.current === controller) {
+        aiAbortRef.current = null;
+      }
     }
   }
 
@@ -1215,28 +1665,141 @@ function App() {
     setError("");
     setAiRouteDisplay(null);
     setStatus("正在准备专家审阅请求...");
+    setMobileAiOpen(false);
+    const controller = new AbortController();
+    aiAbortRef.current = controller;
 
     try {
-      const result = await runAiTaskForCard(draft, "review");
+      const result = await runAiTaskForCard(draft, "review", {
+        signal: controller.signal,
+      });
       setDraft(cloneCard(result.nextCard));
       setEditorMode("preview");
       setStatus("专家审阅已写入正文，确认后保存。");
     } catch (aiError) {
+      const message = aiError instanceof Error ? aiError.message : "专家审阅失败。";
+      if (message.includes("已取消")) {
+        setStatus(message);
+        setError("");
+        return;
+      }
       const hint = isFetchLikeError(aiError)
         ? "请求没有完成，请确认本地 AI 代理正在运行；使用 npm run dev 会同时启动前端和代理。"
         : "";
       setError(
-        `${aiError instanceof Error ? aiError.message : "专家审阅失败。"}${hint ? ` ${hint}` : ""}`
+        `${message}${hint ? ` ${hint}` : ""}`
       );
       setStatus("");
     } finally {
       setAiBusy(false);
+      if (aiAbortRef.current === controller) {
+        aiAbortRef.current = null;
+      }
+    }
+  }
+
+  async function handleAiAction(action: AiActionKind) {
+    if (action === "review_full") {
+      await handleAiReview();
+      return;
+    }
+
+    if (action === "review_section" && !draft.body.trim()) {
+      setError("请先有正文内容，再审阅当前段落。");
+      return;
+    }
+
+    setAiBusy(true);
+    setError("");
+    setAiRouteDisplay(null);
+    setMobileAiOpen(false);
+    const controller = new AbortController();
+    aiAbortRef.current = controller;
+    const label = aiActionLabel(action);
+
+    try {
+      if (action === "review_section") {
+        const { selected } = sectionForReview(draft.body, activeSectionId);
+        if (!selected) {
+          throw new Error("没有找到可审阅的 Markdown 段落。");
+        }
+        setActiveSectionId(selected.id);
+        setStatus(`正在准备${label}：${selected.title}...`);
+        const result = await runAiTaskForCard(draft, "review", {
+          signal: controller.signal,
+          pastedRawAnswer: selected.content,
+          statusLabel: label,
+          modelPreference: "frontier",
+        });
+        const nextBody = replaceMarkdownSection(draft.body, selected, result.nextCard.body);
+        setDraft(
+          cloneCard({
+            ...draft,
+            body: nextBody,
+            providerId: result.nextCard.providerId,
+            model: result.nextCard.model,
+            updatedAt: nowIso(),
+          })
+        );
+        setEditorMode("preview");
+        setStatus(`已审阅「${selected.title}」段落，确认后保存。`);
+        return;
+      }
+
+      const taskType: AiTaskType = action === "tag" ? "tag" : "explain";
+      const result = await runAiTaskForCard(draft, taskType, {
+        signal: controller.signal,
+        forceEconomy: action === "quick" || action === "tag",
+        statusLabel: label,
+        modelPreference:
+          action === "quick" || action === "tag"
+            ? "cheap"
+            : action === "polish"
+              ? "balanced"
+              : undefined,
+      });
+      setDraft(
+        cloneCard(
+          action === "tag"
+            ? {
+                ...draft,
+                tags: result.nextCard.tags.length ? result.nextCard.tags : draft.tags,
+                sourceContext: result.nextCard.sourceContext || draft.sourceContext,
+                pronunciation: result.nextCard.pronunciation || draft.pronunciation,
+                providerId: result.nextCard.providerId,
+                model: result.nextCard.model,
+                updatedAt: nowIso(),
+              }
+            : result.nextCard
+        )
+      );
+      setEditorMode("preview");
+      setStatus(`${label}已写入草稿，确认后保存。`);
+    } catch (aiError) {
+      const message = aiError instanceof Error ? aiError.message : `${label}失败。`;
+      if (message.includes("已取消")) {
+        setStatus(message);
+        setError("");
+        return;
+      }
+      const hint = isFetchLikeError(aiError)
+        ? "请求没有完成，请确认本地 AI 代理正在运行；使用 npm run dev 会同时启动前端和代理。"
+        : "";
+      setError(
+        `${message}${hint ? ` ${hint}` : ""}`
+      );
+      setStatus("");
+    } finally {
+      setAiBusy(false);
+      if (aiAbortRef.current === controller) {
+        aiAbortRef.current = null;
+      }
     }
   }
 
   async function handleBackgroundOrganize() {
     if (!settings?.enableBackgroundAiTasks) {
-      setError("后台整理任务还没有开启。可以在预算中心打开开关。");
+      setError("后台整理任务还没有开启。可以在设置的高级 / 调试里打开开关。");
       return;
     }
 
@@ -1293,6 +1856,191 @@ function App() {
     } finally {
       setAiBusy(false);
     }
+  }
+
+  async function runAiTagMerge(inventory: ReturnType<typeof buildTagMergeInventory>, signal: AbortSignal) {
+    if (!settings) {
+      throw new Error("设置还没有加载完成。");
+    }
+
+    const provider = settings.providers[AUTO_CLASSIFY_PROVIDER_ID];
+    if (!provider) {
+      throw new Error("DeepSeek provider 配置不存在。");
+    }
+
+    const routedProvider: ProviderConfig = {
+      ...provider,
+      defaultModel: preferredActionModel(provider, "cheap"),
+      reasoningEffort: provider.id === "deepseek" ? "none" : provider.reasoningEffort,
+    };
+    const request: AiExplainRequest = {
+      term: "WordMem 标签归并",
+      sourceContext: "只合并已有标签的同义写法，保留一词多标签。",
+      pastedRawAnswer: JSON.stringify(inventory, null, 2),
+      taskType: "tag_merge",
+    };
+    const estimate = estimateAiRequest(routedProvider, request);
+    const dateKey = budgetDateKey();
+    const display: AiRouteDisplay = {
+      providerId: AUTO_CLASSIFY_PROVIDER_ID,
+      providerLabel: provider.label,
+      model: routedProvider.defaultModel,
+      taskType: "tag_merge",
+    };
+    setAiRouteDisplay(display);
+    setStatus(`正在用 ${modelRouteText(display)} 合并 ${inventory.length} 个已有标签...`);
+
+    const startedAt = performance.now();
+    try {
+      const result = await explainWithActiveProvider(settings, request, routedProvider, {
+        signal,
+      });
+      const inputTokens = result.usage?.inputTokens || estimate.inputTokens;
+      const outputTokens = result.usage?.outputTokens || estimateTokens(result.rawAnswer);
+      const usageSource = result.usage?.source || "estimate";
+      const durationMs = result.durationMs || Math.round(performance.now() - startedAt);
+      await persistUsageRecord({
+        id: createId("usage"),
+        dateKey,
+        createdAt: nowIso(),
+        providerId: AUTO_CLASSIFY_PROVIDER_ID,
+        providerLabel: provider.label,
+        model: result.model,
+        taskType: "tag_merge",
+        inputTokens,
+        outputTokens,
+        estimatedCostUsd: estimateCostFromTokens(
+          {
+            ...routedProvider,
+            defaultModel: result.model,
+          },
+          inputTokens,
+          outputTokens
+        ),
+        usageSource,
+        durationMs,
+        status: "success",
+        routeReason: "标签归并 / DeepSeek flash / 不重新生成标签",
+      });
+      return parseTagAliasMap(result.rawAnswer);
+    } catch (tagMergeError) {
+      const aborted =
+        (tagMergeError instanceof DOMException && tagMergeError.name === "AbortError") ||
+        (tagMergeError instanceof Error && /abort/i.test(tagMergeError.name || tagMergeError.message));
+      await persistUsageRecord({
+        id: createId("usage"),
+        dateKey,
+        createdAt: nowIso(),
+        providerId: AUTO_CLASSIFY_PROVIDER_ID,
+        providerLabel: provider.label,
+        model: routedProvider.defaultModel,
+        taskType: "tag_merge",
+        inputTokens: estimate.inputTokens,
+        outputTokens: 0,
+        estimatedCostUsd: estimate.estimatedCostUsd,
+        usageSource: "estimate",
+        durationMs: Math.round(performance.now() - startedAt),
+        status: "failed",
+        routeReason: "标签归并 / DeepSeek flash / 不重新生成标签",
+        error: aborted
+          ? "用户取消了本次请求。"
+          : tagMergeError instanceof Error
+            ? tagMergeError.message
+            : "标签归并失败。",
+      });
+      if (aborted) {
+        throw new Error("AI 请求已取消，已有标签没有继续修改。");
+      }
+      throw tagMergeError;
+    }
+  }
+
+  async function handleMergeCardTags(mode: "local" | "ai") {
+    if (!settings) {
+      return;
+    }
+
+    const inventory = buildTagMergeInventory(cards);
+    if (!inventory.length) {
+      setStatus("还没有可整理的标签。");
+      setError("");
+      return;
+    }
+
+    setError("");
+    setMemoryStatus("");
+    setMobileAiOpen(false);
+    const controller = new AbortController();
+    if (mode === "ai") {
+      setAiBusy(true);
+      aiAbortRef.current = controller;
+    } else {
+      setStatus("正在用本地规则整理已有标签...");
+    }
+
+    try {
+      const aliasMap = mode === "ai" ? await runAiTagMerge(inventory, controller.signal) : {};
+      const updatedCards = applyTagAliasesToCards(cards, aliasMap);
+
+      if (!updatedCards.length) {
+        setStatus(
+          mode === "ai"
+            ? `标签归并完成：分析 ${inventory.length} 个标签，没有需要修改的卡片。`
+            : `本地规则整理完成：${inventory.length} 个标签已经是干净的。`
+        );
+        return;
+      }
+
+      await saveCards(updatedCards);
+      const nextCards = await listCards();
+      setCards(nextCards);
+      const selected = nextCards.find((card) => card.id === draft.id);
+      if (selected) {
+        setDraft(cloneCard(selected));
+      }
+
+      if (canUseBackendSync(settings)) {
+        try {
+          await pushCardsToSync(settings, updatedCards);
+          await applyBackendSyncPatch({
+            lastSyncedAt: nowIso(),
+            pendingChanges: false,
+          });
+          setSyncStatus("标签整理结果已同步到后端。");
+        } catch (syncError) {
+          await applyBackendSyncPatch({ pendingChanges: true });
+          setSyncStatus(`标签整理结果已保存在本地，后端待同步：${syncErrorMessage(syncError)}`);
+        }
+      }
+
+      const aliasCount = Object.keys(aliasMap).length;
+      setStatus(
+        mode === "ai"
+          ? `标签归并完成：合并 ${aliasCount} 个别名，更新 ${updatedCards.length} 张卡片；每张卡仍保留多个标签。`
+          : `本地规则整理完成：更新 ${updatedCards.length} 张卡片；每张卡仍保留多个标签。`
+      );
+    } catch (mergeError) {
+      const message = mergeError instanceof Error ? mergeError.message : "标签整理失败。";
+      if (message.includes("已取消") || controller.signal.aborted) {
+        setStatus("已取消标签归并；已有标签没有继续修改。");
+        setError("");
+      } else {
+        setError(message);
+        setStatus("");
+      }
+    } finally {
+      if (mode === "ai") {
+        setAiBusy(false);
+        if (aiAbortRef.current === controller) {
+          aiAbortRef.current = null;
+        }
+      }
+      setAiRouteDisplay(null);
+    }
+  }
+
+  async function handleAutoClassifyCards(mode: "todo" | "all") {
+    await handleMergeCardTags(mode === "all" ? "ai" : "local");
   }
 
   async function handleSaveSettings() {
@@ -1559,16 +2307,6 @@ function App() {
           </div>
         </div>
 
-        {budgetSummary && (
-          <div className={`budget-chip ${budgetSummary.blocked ? "blocked" : budgetSummary.economyMode ? "economy" : ""}`}>
-            <BarChart3 size={16} />
-            <span>
-              今日 ${formatUsd(budgetSummary.knownSpendUsd)} / ${formatUsd(budgetSummary.wordMemDailyBudgetUsd)}
-            </span>
-            <small>保留 ${formatUsd(budgetSummary.reservedBudgetUsd)}</small>
-          </div>
-        )}
-
         <nav className="view-tabs" aria-label="主视图">
           <button
             className={view === "library" ? "active" : ""}
@@ -1631,7 +2369,7 @@ function App() {
               <div>
                 <strong>词库</strong>
                 <span>
-                  {filteredCards.length} / {cards.length} 张卡片
+                  {filteredCards.length} / {libraryCards.length} 张卡片
                 </span>
               </div>
               <button onClick={showMobileDetail}>
@@ -1669,6 +2407,67 @@ function App() {
               />
             </label>
 
+            <div className="library-mode-tabs" aria-label="词库浏览模式">
+              <button
+                className={libraryMode === "views" ? "active" : ""}
+                onClick={() => {
+                  setLibraryMode("views");
+                  setActiveTag("");
+                }}
+                disabled={!knowledgeViews.length}
+              >
+                知识视图
+              </button>
+              <button
+                className={libraryMode === "all" ? "active" : ""}
+                onClick={showAllLibraryCards}
+              >
+                全部卡片
+              </button>
+            </div>
+
+            {libraryMode === "views" && (
+              <div className="knowledge-view-panel">
+                {knowledgeViews.length ? (
+                  <>
+                    <div className="knowledge-view-list" aria-label="知识视图">
+                      {knowledgeViews.map((knowledgeView) => (
+                        <button
+                          key={knowledgeView.id}
+                          className={
+                            activeKnowledgeView?.id === knowledgeView.id ? "selected" : ""
+                          }
+                          onClick={() => selectKnowledgeView(knowledgeView.id)}
+                        >
+                          <strong>{knowledgeView.title}</strong>
+                          <span>{knowledgeView.description}</span>
+                          <small>
+                            {knowledgeView.count} 张 · {knowledgeView.tags.slice(0, 3).join(" / ")}
+                          </small>
+                        </button>
+                      ))}
+                    </div>
+
+                    {activeKnowledgeView && (
+                      <div className="knowledge-view-summary">
+                        <strong>{activeKnowledgeView.title}</strong>
+                        <span>
+                          {activeKnowledgeView.count} 张卡片
+                          {activeKnowledgeView.cards[0]
+                            ? ` · 最近：${activeKnowledgeView.cards[0].term}`
+                            : ""}
+                        </span>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="knowledge-view-empty">
+                    还没有足够标签生成知识视图。
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="tag-filter" aria-label="标签筛选">
               <button className={!activeTag ? "active" : ""} onClick={() => setActiveTag("")}>
                 全部
@@ -1687,7 +2486,10 @@ function App() {
             <div className="card-count">
               <Tags size={16} />
               <span>
-                {filteredCards.length} / {cards.length} 张卡片
+                {filteredCards.length} / {libraryCards.length} 张卡片
+                {libraryMode === "views" && activeKnowledgeView
+                  ? ` · ${activeKnowledgeView.title}`
+                  : ""}
               </span>
             </div>
 
@@ -1727,6 +2529,17 @@ function App() {
                 <Settings size={16} />
                 <span>模型设置</span>
               </button>
+              <button
+                className="mobile-top-more"
+                onClick={() => {
+                  setMobileMoreOpen((current) => !current);
+                  setMobileAiOpen(false);
+                }}
+                aria-expanded={mobileMoreOpen}
+                title="更多"
+              >
+                <MoreHorizontal size={18} />
+              </button>
             </div>
 
             <div className="document-head">
@@ -1734,43 +2547,60 @@ function App() {
                 {persistedDraft ? (editorMode === "preview" ? "正在预览" : "正在编辑") : "新卡片"}
               </span>
               <div className="title-row">
-                <input
+                <textarea
                   className="title-input"
                   style={
                     mobileLayout ? { fontSize: mobileTitleFontSize(draft.term) } : undefined
                   }
+                  rows={1}
                   value={draft.term}
                   onChange={(event) => updateDraft("term", event.target.value)}
                   placeholder="输入术语或术语组"
                   title={draft.term}
+                  wrap="soft"
                 />
-                <input
+                <textarea
                   className="pronunciation-input"
-                  value={draft.pronunciation || ""}
-                  onChange={(event) => updateDraft("pronunciation", event.target.value)}
-                  placeholder="/ pronunciation /"
+                  rows={1}
+                  value={cleanPronunciation(draft.pronunciation)}
+                  onChange={(event) =>
+                    updateDraft("pronunciation", cleanPronunciation(event.target.value))
+                  }
+                  placeholder="音标可选"
                   aria-label="读音"
+                  wrap="soft"
                 />
               </div>
 
-              <div className="meta-row">
-                <label>
-                  <span>标签</span>
-                  <input
-                    value={draft.tags.join(", ")}
-                    onChange={(event) => updateDraft("tags", normalizeTags(event.target.value))}
-                    placeholder="RL, PPO, robotics, retargeting, MuJoCo"
-                  />
-                </label>
-                <label>
-                  <span>工作上下文</span>
-                  <input
-                    value={draft.sourceContext}
-                    onChange={(event) => updateDraft("sourceContext", event.target.value)}
-                    placeholder="例如：PPO 训练日志、MuJoCo replay、GMR retargeting、policy rollout"
-                  />
-                </label>
-              </div>
+              <details
+                className="card-info-details"
+                open={!mobileLayout || editorMode === "edit"}
+              >
+                <summary>
+                  <span>卡片信息</span>
+                  <small>
+                    {draft.tags.length ? draft.tags.slice(0, 3).join("，") : "标签 / 工作上下文"}
+                  </small>
+                </summary>
+                <div className="meta-row">
+                  <label>
+                    <span>标签</span>
+                    <input
+                      value={draft.tags.join(", ")}
+                      onChange={(event) => updateDraft("tags", normalizeTags(event.target.value))}
+                      placeholder="RL, PPO, robotics, retargeting, MuJoCo"
+                    />
+                  </label>
+                  <label>
+                    <span>工作上下文</span>
+                    <input
+                      value={draft.sourceContext}
+                      onChange={(event) => updateDraft("sourceContext", event.target.value)}
+                      placeholder="例如：PPO 训练日志、MuJoCo replay、GMR retargeting、policy rollout"
+                    />
+                  </label>
+                </div>
+              </details>
             </div>
 
             <div className="editor-toolbar">
@@ -1800,6 +2630,12 @@ function App() {
                   <Brain size={18} />
                   <span>专家审阅</span>
                 </button>
+                {aiBusy && (
+                  <button onClick={cancelAiRequest}>
+                    <X size={18} />
+                    <span>取消</span>
+                  </button>
+                )}
                 <button className="primary-action" onClick={handleSaveCard}>
                   <Save size={18} />
                   <span>保存</span>
@@ -1817,13 +2653,6 @@ function App() {
               </div>
             )}
 
-            {budgetStatus && (
-              <div className="budget-note">
-                <BarChart3 size={15} />
-                <span>{budgetStatus}</span>
-              </div>
-            )}
-
             {editorMode === "edit" ? (
               <textarea
                 className="body-editor"
@@ -1836,8 +2665,82 @@ function App() {
                 body={draft.body}
                 compactSections={mobileLayout}
                 searchQuery={query}
+                onSectionFocus={setActiveSectionId}
               />
             )}
+
+            {editorMode === "preview" && relatedCards.length > 0 && (
+              <section className="related-cards-section" aria-label="相关卡片">
+                <div className="related-cards-head">
+                  <div>
+                    <strong>相关卡片</strong>
+                    <span>根据术语、标签、上下文和正文关键词本地匹配</span>
+                  </div>
+                  <small>{relatedCards.length} 张</small>
+                </div>
+                <div className="related-card-list">
+                  {relatedCards.map((item) => (
+                    <button
+                      key={item.card.id}
+                      className="related-card-item"
+                      onClick={() => selectCard(item.card)}
+                    >
+                      <div>
+                        <strong>{item.card.term || "未命名卡片"}</strong>
+                        <span>{getCardSummary(item.card) || "没有正文内容"}</span>
+                      </div>
+                      <small>{item.reasons.join(" · ") || "内容相近"}</small>
+                    </button>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            <div
+              className={`mobile-ai-backdrop ${mobileAiOpen ? "open" : ""}`}
+              onClick={() => setMobileAiOpen(false)}
+              aria-hidden="true"
+            />
+            <div className={`mobile-ai-menu ${mobileAiOpen ? "open" : ""}`}>
+              <div className="mobile-ai-menu-head">
+                <strong>AI 操作</strong>
+                <span>{modelRouteText(modelDisplay, aiBusy)}</span>
+              </div>
+              {aiBusy ? (
+                <button className="danger-action" onClick={cancelAiRequest}>
+                  <X size={18} />
+                  <span>取消当前请求</span>
+                </button>
+              ) : (
+                <>
+                  <button onClick={() => handleAiAction("quick")}>
+                    <Sparkles size={18} />
+                    <span>快速解释</span>
+                    <small>优先快模型</small>
+                  </button>
+                  <button onClick={() => handleAiAction("polish")}>
+                    <Pencil size={18} />
+                    <span>高质量整理</span>
+                    <small>把正文整理成 Markdown</small>
+                  </button>
+                  <button onClick={() => handleAiAction("review_section")} disabled={!draft.body.trim()}>
+                    <Brain size={18} />
+                    <span>专家审阅当前段落</span>
+                    <small>更快，适合手机端</small>
+                  </button>
+                  <button onClick={() => handleAiAction("review_full")} disabled={!draft.body.trim()}>
+                    <Brain size={18} />
+                    <span>专家审阅全文</span>
+                    <small>更慢，费用更高</small>
+                  </button>
+                  <button onClick={() => handleAiAction("tag")} disabled={!draft.body.trim()}>
+                    <Tags size={18} />
+                    <span>补标签和相关词</span>
+                    <small>便宜模型或本地估算</small>
+                  </button>
+                </>
+              )}
+            </div>
 
             <div
               className={`mobile-more-backdrop ${mobileMoreOpen ? "open" : ""}`}
@@ -1845,20 +2748,6 @@ function App() {
               aria-hidden="true"
             />
             <div className={`mobile-more-menu ${mobileMoreOpen ? "open" : ""}`}>
-              <button onClick={toggleEditorMode}>
-                {editorMode === "edit" ? <Eye size={18} /> : <Pencil size={18} />}
-                <span>{editorMode === "edit" ? "切到预览" : "切到编辑"}</span>
-              </button>
-              <button
-                onClick={() => {
-                  setMobileMoreOpen(false);
-                  handleAiReview();
-                }}
-                disabled={aiBusy || !draft.body.trim()}
-              >
-                <Brain size={18} />
-                <span>专家审阅</span>
-              </button>
               <button onClick={openModelSettings}>
                 <Settings size={18} />
                 <span>模型设置</span>
@@ -1888,20 +2777,17 @@ function App() {
                 <Library size={19} />
                 <span>词库</span>
               </button>
-              <button onClick={handleAiExplain} disabled={aiBusy}>
+              <button onClick={toggleEditorMode}>
+                {editorMode === "edit" ? <Eye size={19} /> : <Pencil size={19} />}
+                <span>{editorMode === "edit" ? "预览" : "编辑"}</span>
+              </button>
+              <button onClick={toggleMobileAiPanel}>
                 {aiBusy ? <Loader2 className="spin" size={19} /> : <Sparkles size={19} />}
-                <span>AI</span>
+                <span>AI 操作</span>
               </button>
               <button className="primary-action" onClick={handleSaveCard}>
                 <Save size={19} />
                 <span>保存</span>
-              </button>
-              <button
-                onClick={() => setMobileMoreOpen((current) => !current)}
-                aria-expanded={mobileMoreOpen}
-              >
-                <MoreHorizontal size={20} />
-                <span>更多</span>
               </button>
             </nav>
           </section>
@@ -2014,24 +2900,18 @@ function App() {
             </section>
 
             {budgetSummary && (
-              <section className="budget-settings">
-                <div className="budget-settings-head">
+              <details className="budget-settings">
+                <summary className="budget-settings-head">
                   <div>
-                    <strong>预算中心</strong>
+                    <strong>高级 / 调试</strong>
                     <span>
-                      今日 {budgetSummary.dateKey}，WordMem 自动功能最多用 $
-                      {formatUsd(budgetSummary.wordMemDailyBudgetUsd)}，给你保留 $
-                      {formatUsd(budgetSummary.reservedBudgetUsd)}。
+                      用量记录、预算估算和后台整理开关。默认不影响主界面，也不拦截日常 AI。
                     </span>
                   </div>
-                  <div className={`budget-state ${budgetSummary.blocked ? "blocked" : budgetSummary.economyMode ? "economy" : ""}`}>
-                    {budgetSummary.blocked
-                      ? "已达上限"
-                      : budgetSummary.economyMode
-                        ? "省钱模式"
-                        : "预算正常"}
+                  <div className="budget-state">
+                    调试信息
                   </div>
-                </div>
+                </summary>
 
                 <div className="budget-stats">
                   <div>
@@ -2180,7 +3060,9 @@ function App() {
                           ? "未知，需手动填写单价"
                           : priceForProvider(activeProvider).source === "manual"
                             ? "手动单价"
-                            : "OpenAI 参考价"
+                            : priceForProvider(activeProvider).source === "deepseek-reference"
+                              ? "DeepSeek 官方参考价"
+                              : "OpenAI 参考价"
                         : "未选择"}
                     </span>
                   </div>
@@ -2196,6 +3078,8 @@ function App() {
                             {usageRecordCost(record) === undefined
                               ? "未知"
                               : formatUsd(usageRecordCost(record))}
+                            {record.usageSource ? ` / ${record.usageSource}` : ""}
+                            {record.durationMs ? ` / ${(record.durationMs / 1000).toFixed(1)}s` : ""}
                           </small>
                         </div>
                       ))}
@@ -2204,8 +3088,39 @@ function App() {
                     <div className="empty-usage">今天还没有 AI 用量记录。</div>
                   )}
                 </details>
-              </section>
+              </details>
             )}
+
+            <section className="classification-settings">
+              <div className="classification-settings-head">
+                <div>
+                  <strong>标签整理中心</strong>
+                  <span>
+                    合并已有相似标签；保留一词多标签，不重新生成分类，不改正文。
+                  </span>
+                </div>
+                <div className="classification-state">
+                  {buildTagMergeInventory(cards).length} 个标签
+                </div>
+              </div>
+
+              <div className="classification-actions">
+                <button onClick={() => handleAutoClassifyCards("todo")} disabled={aiBusy || !cards.length}>
+                  {aiBusy ? <Loader2 className="spin" size={18} /> : <Tags size={18} />}
+                  <span>本地规则整理标签</span>
+                </button>
+                <button onClick={() => handleAutoClassifyCards("all")} disabled={aiBusy || !cards.length}>
+                  <Sparkles size={18} />
+                  <span>AI 合并相似标签</span>
+                </button>
+                {aiBusy && (
+                  <button className="danger-action" onClick={cancelAiRequest}>
+                    <X size={18} />
+                    <span>取消</span>
+                  </button>
+                )}
+              </div>
+            </section>
 
             <section className="memory-settings">
               <div className="memory-settings-head">

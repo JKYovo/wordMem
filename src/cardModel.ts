@@ -270,7 +270,11 @@ function unescapeJsonish(value: string) {
 
 export function cardSummary(card: KnowledgeCard) {
   const source = card.body || card.sourceContext || "";
-  return source
+  return markdownToPreviewText(source)
+    .replace(
+      /^(简单理解|简单来说|简单说|简短解释|简短含义|一句话|核心理解|工作语境|典型用法|对比理解|例子|记忆句)\s*/i,
+      ""
+    )
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 120);
@@ -282,4 +286,22 @@ export function getCardSummary(card: KnowledgeCard) {
 
 export function cardHasContent(card: KnowledgeCard) {
   return hasText(card.term) || hasText(card.body) || hasText(card.sourceContext);
+}
+
+function markdownToPreviewText(value: string) {
+  return unwrapAiWrappedBody(value)
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/\$\$[\s\S]*?\$\$/g, " ")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/!\[[^\]]*\]\([^)]+\)/g, " ")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/^>\s?/gm, "")
+    .replace(/^\s*[-*+]\s+/gm, "")
+    .replace(/^\s*\d+\.\s+/gm, "")
+    .replace(/[*_~]{1,3}([^*_~]+)[*_~]{1,3}/g, "$1")
+    .replace(/\\\(([\s\S]*?)\\\)/g, "$1")
+    .replace(/\$([^$\n]+)\$/g, "$1")
+    .replace(/[{}\\]/g, "")
+    .trim();
 }

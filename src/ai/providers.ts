@@ -28,7 +28,7 @@ const SYSTEM_PROMPT = `你是一个工作术语知识卡片助手。你的任务
 回答必须是一个 JSON 对象，不要使用 Markdown 代码块。字段如下：
 {
   "term": "术语或术语组标题",
-  "pronunciation": "英文读音、音标或近似读音；不知道可留空",
+  "pronunciation": "只填写真实 IPA 音标，例如 /ˈstɑːkæstɪk/；不知道可留空字符串。不要写中文近似读音、拼音、解释，也绝不要返回 /ipa/、/pronunciation/、IPA 这类占位符",
   "sourceContext": "如果用户给了工作上下文，提炼成一句；没有就留空",
   "tags": ["标签1", "标签2"],
   "body": "完整 Markdown 笔记正文，必须使用下面定义的解释风格"
@@ -60,6 +60,31 @@ function buildUserPrompt(request: AiExplainRequest) {
   const memoryContext = request.memoryContext;
   const relatedCards = memoryContext?.relatedCards || [];
   const taskType = request.taskType || "explain";
+  if (taskType === "tag_merge") {
+    return `本次任务：
+标签归并。只分析用户已经存在的标签，把明显同义、大小写差异、中英文变体或近义写法合并为统一标签。
+
+重要规则：
+- 每张卡允许保留多个标签；不要设计单一分类。
+- 只返回标签别名映射，不要重新生成卡片标签列表，不要改正文。
+- 只合并明显同义或写法变体，例如 RL / reinforcement learning / 强化学习。
+- 不要把不同层级或不同维度的标签吞掉，例如 PPO、policy、rollout、强化学习、机器人控制、仿真评测应该能同时存在。
+- 如果不确定两个标签是否同义，不要合并。
+
+必须只返回 JSON 对象，不要 Markdown 代码块，格式如下：
+{
+  "aliases": {
+    "RL": "强化学习",
+    "reinforcement learning": "强化学习",
+    "robotics": "机器人控制"
+  }
+}
+
+已有标签和示例术语：
+${request.pastedRawAnswer || "[]"}
+
+请只返回 aliases。`;
+  }
   const relatedCardsText = relatedCards.length
     ? relatedCards
         .map(
@@ -103,7 +128,10 @@ function taskInstruction(taskType: AiTaskType) {
     return "后台整理旧卡片：保留核心内容，补齐 Markdown 结构、标签、易混概念和简短记忆句；不要删掉重要工作细节。";
   }
   if (taskType === "tag") {
-    return "给卡片补充标签、摘要和搜索关键词，正文保持简洁。";
+    return "给当前卡片补充搜索标签和相关词：只根据术语、上下文和正文返回 3-6 个稳定标签。优先使用这些统一标签：深度学习、机器学习、强化学习、PPO、policy、rollout、机器人控制、运动控制、仿真评测、GMR、motion retargeting、数学基础、优化算法、debug。不要重写正文；body 可以原样保留或给极短摘要。";
+  }
+  if (taskType === "tag_merge") {
+    return "标签归并：只合并已有标签中的同义、大小写和中英文变体，返回 aliases 映射；不要把一张卡压成单一分类。";
   }
   if (taskType === "memory_profile") {
     return "从用户已有卡片中提炼个人偏好和常用领域词，输出可放进个人偏好的简短说明。";
@@ -347,7 +375,8 @@ function localProxyUrls(settings: AppSettings) {
 async function callLocalProxy(
   settings: AppSettings,
   provider: ProviderConfig,
-  request: AiExplainRequest
+  request: AiExplainRequest,
+  signal?: AbortSignal
 ): Promise<AiExplainResult> {
   const authToken = settings.backendSync?.token.trim();
   const urls = localProxyUrls(settings);
@@ -360,6 +389,7 @@ async function callLocalProxy(
     try {
       response = await fetch(proxyUrl, {
         method: "POST",
+        signal,
         headers: {
           "Content-Type": "application/json",
           ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
@@ -372,11 +402,18 @@ async function callLocalProxy(
         }),
       });
     } catch (error) {
+      if (signal?.aborted) {
+        throw new Error("AI 请求已取消。");
+      }
       lastError = `${proxyUrl}：${error instanceof Error ? error.message : "请求失败"}`;
       if (index < urls.length - 1) {
         continue;
       }
       throw new Error(`本地 AI 代理请求失败：${lastError}`);
+    }
+
+    if (signal?.aborted) {
+      throw new Error("AI 请求已取消。");
     }
 
     if (!response.ok) {
@@ -395,6 +432,8 @@ async function callLocalProxy(
       structuredDraft: payload.structuredDraft || extractJsonObject(rawAnswer),
       providerId: (payload.providerId || provider.id || settings.activeProvider) as AiProviderId,
       model: payload.model || provider.defaultModel,
+      usage: payload.usage,
+      durationMs: payload.durationMs,
     };
   }
 
@@ -461,11 +500,12 @@ async function callChatCompletions(provider: ProviderConfig, request: AiExplainR
 export async function explainWithActiveProvider(
   settings: AppSettings,
   request: AiExplainRequest,
-  routedProvider?: ProviderConfig
+  routedProvider?: ProviderConfig,
+  options: { signal?: AbortSignal } = {}
 ): Promise<AiExplainResult> {
   const provider = routedProvider || requireConfig(settings);
   requireUsableProvider(settings, provider);
-  const proxied = await callLocalProxy(settings, provider, request);
+  const proxied = await callLocalProxy(settings, provider, request, options.signal);
 
   if (!proxied.rawAnswer.trim()) {
     throw new Error("模型没有返回可保存的文本。");

@@ -11,7 +11,7 @@ import type {
 type Price = {
   input: number;
   output: number;
-  source: "openai-reference" | "manual" | "unknown";
+  source: "openai-reference" | "deepseek-reference" | "manual" | "unknown";
 };
 type TokenPrice = Pick<Price, "input" | "output">;
 
@@ -52,6 +52,26 @@ const OPENAI_REFERENCE_PRICES: Array<{
   { prefix: "gpt-5.4-nano", input: 0.2, output: 1.25 },
   { prefix: "gpt-5.4-pro", input: 15, output: 90 },
   { prefix: "gpt-5.4", input: 2.5, output: 15 },
+];
+
+const DEEPSEEK_V4_PRO_PROMO_END_UTC = Date.UTC(2026, 4, 31, 15, 59, 0);
+const DEEPSEEK_REFERENCE_PRICES: Array<{
+  prefix: string;
+  input: number;
+  output: number;
+  promoInput?: number;
+  promoOutput?: number;
+}> = [
+  { prefix: "deepseek-v4-flash", input: 0.14, output: 0.28 },
+  { prefix: "deepseek-chat", input: 0.14, output: 0.28 },
+  { prefix: "deepseek-reasoner", input: 0.14, output: 0.28 },
+  {
+    prefix: "deepseek-v4-pro",
+    input: 1.74,
+    output: 3.48,
+    promoInput: 0.435,
+    promoOutput: 0.87,
+  },
 ];
 
 const HARD_KEYWORDS = [
@@ -111,12 +131,12 @@ export function priceForProvider(provider: ProviderConfig): Price {
     };
   }
 
-  const openAiModelMatch = openAiReferencePriceForModel(provider.defaultModel);
-  if (openAiModelMatch) {
+  const referencePrice = referencePriceForModel(provider.defaultModel);
+  if (referencePrice) {
     return {
-      input: openAiModelMatch.input,
-      output: openAiModelMatch.output,
-      source: "openai-reference",
+      input: referencePrice.input,
+      output: referencePrice.output,
+      source: referencePrice.source,
     };
   }
 
@@ -126,6 +146,49 @@ export function priceForProvider(provider: ProviderConfig): Price {
 function openAiReferencePriceForModel(modelName: string) {
   const model = modelName.toLowerCase();
   return OPENAI_REFERENCE_PRICES.find((price) => model.startsWith(price.prefix));
+}
+
+function deepSeekReferencePriceForModel(modelName: string) {
+  const model = modelName.toLowerCase();
+  const price = DEEPSEEK_REFERENCE_PRICES.find((item) => model.startsWith(item.prefix));
+  if (!price) {
+    return undefined;
+  }
+  if (
+    price.promoInput !== undefined &&
+    price.promoOutput !== undefined &&
+    Date.now() <= DEEPSEEK_V4_PRO_PROMO_END_UTC
+  ) {
+    return {
+      input: price.promoInput,
+      output: price.promoOutput,
+    };
+  }
+  return {
+    input: price.input,
+    output: price.output,
+  };
+}
+
+function referencePriceForModel(modelName: string) {
+  const openAiPrice = openAiReferencePriceForModel(modelName);
+  if (openAiPrice) {
+    return {
+      input: openAiPrice.input,
+      output: openAiPrice.output,
+      source: "openai-reference" as const,
+    };
+  }
+
+  const deepSeekPrice = deepSeekReferencePriceForModel(modelName);
+  if (deepSeekPrice) {
+    return {
+      ...deepSeekPrice,
+      source: "deepseek-reference" as const,
+    };
+  }
+
+  return undefined;
 }
 
 export function estimateTokens(text: string) {
@@ -149,6 +212,9 @@ function expectedOutputTokens(taskType: AiTaskType, request: AiExplainRequest) {
   }
   if (taskType === "tag") {
     return 320;
+  }
+  if (taskType === "tag_merge") {
+    return 700;
   }
   if (taskType === "memory_profile") {
     return 700;
@@ -191,12 +257,20 @@ export function estimateActualCost(
   inputTokens: number,
   outputText: string
 ) {
+  return estimateCostFromTokens(provider, inputTokens, estimateTokens(outputText));
+}
+
+export function estimateCostFromTokens(
+  provider: ProviderConfig,
+  inputTokens: number,
+  outputTokens: number
+) {
   const price = priceForProvider(provider);
   if (price.source === "unknown") {
     return undefined;
   }
 
-  return costFromTokens(inputTokens, estimateTokens(outputText), price);
+  return costFromTokens(inputTokens, outputTokens, price);
 }
 
 export function usageRecordCost(record: UsageRecord) {
@@ -204,7 +278,7 @@ export function usageRecordCost(record: UsageRecord) {
     return record.estimatedCostUsd;
   }
 
-  const price = openAiReferencePriceForModel(record.model);
+  const price = referencePriceForModel(record.model);
   if (!price) {
     return undefined;
   }
@@ -330,7 +404,12 @@ function chooseModel(
     if (taskType === "review") {
       return pro || flash || provider.defaultModel;
     }
-    if (taskType === "summarize" || taskType === "tag" || taskType === "memory_profile") {
+    if (
+      taskType === "summarize" ||
+      taskType === "tag" ||
+      taskType === "tag_merge" ||
+      taskType === "memory_profile"
+    ) {
       return flash || provider.defaultModel;
     }
     return economyMode || !hard ? flash || provider.defaultModel : pro || flash || provider.defaultModel;
@@ -343,7 +422,12 @@ function chooseModel(
   if (taskType === "review") {
     return frontier || balanced || cheap || provider.defaultModel;
   }
-  if (taskType === "summarize" || taskType === "tag" || taskType === "memory_profile") {
+  if (
+    taskType === "summarize" ||
+    taskType === "tag" ||
+    taskType === "tag_merge" ||
+    taskType === "memory_profile"
+  ) {
     return cheap || balanced || provider.defaultModel;
   }
   if (economyMode) {
@@ -365,7 +449,12 @@ function chooseReasoningEffort(
   if (taskType === "review") {
     return "xhigh";
   }
-  if (taskType === "summarize" || taskType === "tag" || taskType === "memory_profile") {
+  if (
+    taskType === "summarize" ||
+    taskType === "tag" ||
+    taskType === "tag_merge" ||
+    taskType === "memory_profile"
+  ) {
     return "low";
   }
   if (economyMode) {
@@ -383,6 +472,9 @@ export function taskLabel(taskType: AiTaskType) {
   }
   if (taskType === "tag") {
     return "标签摘要";
+  }
+  if (taskType === "tag_merge") {
+    return "标签归并";
   }
   if (taskType === "memory_profile") {
     return "记忆偏好";

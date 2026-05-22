@@ -25,7 +25,7 @@ const SYSTEM_PROMPT = `你是一个工作术语知识卡片助手。你的任务
 回答必须是一个 JSON 对象，不要使用 Markdown 代码块。字段如下：
 {
   "term": "术语或术语组标题",
-  "pronunciation": "英文读音、音标或近似读音；不知道可留空",
+  "pronunciation": "只填写真实 IPA 音标，例如 /ˈstɑːkæstɪk/；不知道可留空字符串。不要写中文近似读音、拼音、解释，也绝不要返回 /ipa/、/pronunciation/、IPA 这类占位符",
   "sourceContext": "如果用户给了工作上下文，提炼成一句；没有就留空",
   "tags": ["标签1", "标签2"],
   "body": "完整 Markdown 笔记正文，必须使用下面定义的解释风格"
@@ -59,6 +59,31 @@ function buildUserPrompt(request) {
     ? memoryContext.relatedCards
     : [];
   const taskType = request.taskType || "explain";
+  if (taskType === "tag_merge") {
+    return `本次任务：
+标签归并。只分析用户已经存在的标签，把明显同义、大小写差异、中英文变体或近义写法合并为统一标签。
+
+重要规则：
+- 每张卡允许保留多个标签；不要设计单一分类。
+- 只返回标签别名映射，不要重新生成卡片标签列表，不要改正文。
+- 只合并明显同义或写法变体，例如 RL / reinforcement learning / 强化学习。
+- 不要把不同层级或不同维度的标签吞掉，例如 PPO、policy、rollout、强化学习、机器人控制、仿真评测应该能同时存在。
+- 如果不确定两个标签是否同义，不要合并。
+
+必须只返回 JSON 对象，不要 Markdown 代码块，格式如下：
+{
+  "aliases": {
+    "RL": "强化学习",
+    "reinforcement learning": "强化学习",
+    "robotics": "机器人控制"
+  }
+}
+
+已有标签和示例术语：
+${request.pastedRawAnswer || "[]"}
+
+请只返回 aliases。`;
+  }
   const relatedCardsText = relatedCards.length
     ? relatedCards
         .map(
@@ -102,7 +127,10 @@ function taskInstruction(taskType) {
     return "后台整理旧卡片：保留核心内容，补齐 Markdown 结构、标签、易混概念和简短记忆句；不要删掉重要工作细节。";
   }
   if (taskType === "tag") {
-    return "给卡片补充标签、摘要和搜索关键词，正文保持简洁。";
+    return "给当前卡片补充搜索标签和相关词：只根据术语、上下文和正文返回 3-6 个稳定标签。优先使用这些统一标签：深度学习、机器学习、强化学习、PPO、policy、rollout、机器人控制、运动控制、仿真评测、GMR、motion retargeting、数学基础、优化算法、debug。不要重写正文；body 可以原样保留或给极短摘要。";
+  }
+  if (taskType === "tag_merge") {
+    return "标签归并：只合并已有标签中的同义、大小写和中英文变体，返回 aliases 映射；不要把一张卡压成单一分类。";
   }
   if (taskType === "memory_profile") {
     return "从用户已有卡片中提炼个人偏好和常用领域词，输出可放进个人偏好的简短说明。";
@@ -212,7 +240,7 @@ function requestJson(targetUrl, apiKey, payload) {
   });
 }
 
-function requestResponsesText(targetUrl, apiKey, payload) {
+function requestResponsesResult(targetUrl, apiKey, payload) {
   return new Promise((resolve, reject) => {
     const parsed = new URL(targetUrl);
     const body = JSON.stringify(payload);
@@ -251,8 +279,12 @@ function requestResponsesText(targetUrl, apiKey, payload) {
             return;
           }
 
-          const streamedText = extractResponsesStreamText(raw);
-          resolve(streamedText || extractResponsesText(parsedBody));
+          const streamResult = extractResponsesStreamResult(raw);
+          const text = streamResult.text || extractResponsesText(parsedBody);
+          resolve({
+            text,
+            usage: streamResult.usage || extractUsage(parsedBody),
+          });
         });
       }
     );
@@ -320,9 +352,45 @@ function collectText(value, parts) {
   }
 }
 
-function extractResponsesStreamText(raw) {
+function extractUsage(payload) {
+  const usage = payload && payload.usage ? payload.usage : payload;
+  if (!usage || typeof usage !== "object") {
+    return undefined;
+  }
+
+  const inputTokens = Number(
+    usage.input_tokens ||
+      usage.prompt_tokens ||
+      usage.inputTokens ||
+      usage.promptTokens ||
+      0
+  );
+  const outputTokens = Number(
+    usage.output_tokens ||
+      usage.completion_tokens ||
+      usage.outputTokens ||
+      usage.completionTokens ||
+      0
+  );
+
+  if (!Number.isFinite(inputTokens) || !Number.isFinite(outputTokens)) {
+    return undefined;
+  }
+  if (inputTokens <= 0 && outputTokens <= 0) {
+    return undefined;
+  }
+
+  return {
+    inputTokens: Math.max(0, Math.round(inputTokens)),
+    outputTokens: Math.max(0, Math.round(outputTokens)),
+    source: "provider",
+  };
+}
+
+function extractResponsesStreamResult(raw) {
   const deltas = [];
   let completedText = "";
+  let completedUsage;
 
   String(raw || "")
     .split(/\r?\n/)
@@ -352,6 +420,10 @@ function extractResponsesStreamText(raw) {
         if (text) {
           completedText = text;
         }
+        const usage = extractUsage(payload.response);
+        if (usage) {
+          completedUsage = usage;
+        }
       }
       if (Array.isArray(payload.choices)) {
         payload.choices.forEach((choice) => {
@@ -366,9 +438,20 @@ function extractResponsesStreamText(raw) {
       if (typeof payload.output_text === "string") {
         completedText = payload.output_text;
       }
+      const usage = extractUsage(payload);
+      if (usage) {
+        completedUsage = usage;
+      }
     });
 
-  return (completedText || deltas.join("")).trim();
+  return {
+    text: (completedText || deltas.join("")).trim(),
+    usage: completedUsage,
+  };
+}
+
+function extractResponsesStreamText(raw) {
+  return extractResponsesStreamResult(raw).text;
 }
 
 function extractChatText(payload) {
@@ -498,6 +581,7 @@ async function requireProvider(payload, req) {
 }
 
 async function explain(payload, req) {
+  const startedAt = Date.now();
   const providerResult = await requireProvider(payload, req);
   const provider = providerResult.provider;
   const apiKey = providerResult.apiKey;
@@ -505,6 +589,7 @@ async function explain(payload, req) {
   const wireApi =
     provider.id === "deepseek" ? "chat_completions" : provider.wireApi || "chat_completions";
   let rawAnswer = "";
+  let usage;
 
   if (wireApi === "responses") {
     const body = {
@@ -522,11 +607,13 @@ async function explain(payload, req) {
       body.reasoning = { effort: provider.reasoningEffort };
     }
 
-    rawAnswer = await requestResponsesText(
+    const result = await requestResponsesResult(
       endpoint(provider.baseUrl, "/responses"),
       apiKey,
       body
     );
+    rawAnswer = result.text;
+    usage = result.usage;
   } else {
     const response = await requestJson(
       endpoint(provider.baseUrl, "/chat/completions"),
@@ -541,6 +628,7 @@ async function explain(payload, req) {
       }
     );
     rawAnswer = extractChatText(response);
+    usage = extractUsage(response);
   }
 
   if (!rawAnswer.trim()) {
@@ -552,6 +640,8 @@ async function explain(payload, req) {
     structuredDraft: extractJsonObject(rawAnswer),
     providerId: payload.providerId,
     model: provider.defaultModel,
+    usage,
+    durationMs: Date.now() - startedAt,
   };
 }
 
