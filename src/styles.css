@@ -3320,6 +3320,11 @@ details.budget-settings:not([open]) .budget-settings-head {
   background: rgba(255, 255, 255, 0.62);
 }
 
+.app-shell.mobile-layout .mobile-bottom-actions button.active {
+  color: var(--teal-strong);
+  background: rgba(229, 248, 245, 0.68);
+}
+
 .app-shell.mobile-layout .mobile-ai-backdrop.open,
 .app-shell.mobile-layout .mobile-more-backdrop.open {
   background: rgba(21, 33, 45, 0.24);

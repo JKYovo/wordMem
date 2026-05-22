@@ -2696,101 +2696,117 @@ function App() {
               </section>
             )}
 
-            <div
-              className={`mobile-ai-backdrop ${mobileAiOpen ? "open" : ""}`}
-              onClick={() => setMobileAiOpen(false)}
-              aria-hidden="true"
-            />
-            <div className={`mobile-ai-menu ${mobileAiOpen ? "open" : ""}`}>
-              <div className="mobile-ai-menu-head">
-                <strong>AI 操作</strong>
-                <span>{modelRouteText(modelDisplay, aiBusy)}</span>
-              </div>
-              {aiBusy ? (
-                <button className="danger-action" onClick={cancelAiRequest}>
-                  <X size={18} />
-                  <span>取消当前请求</span>
-                </button>
-              ) : (
-                <>
-                  <button onClick={() => handleAiAction("quick")}>
-                    <Sparkles size={18} />
-                    <span>快速解释</span>
-                    <small>优先快模型</small>
-                  </button>
-                  <button onClick={() => handleAiAction("polish")}>
-                    <Pencil size={18} />
-                    <span>高质量整理</span>
-                    <small>把正文整理成 Markdown</small>
-                  </button>
-                  <button onClick={() => handleAiAction("review_section")} disabled={!draft.body.trim()}>
-                    <Brain size={18} />
-                    <span>专家审阅当前段落</span>
-                    <small>更快，适合手机端</small>
-                  </button>
-                  <button onClick={() => handleAiAction("review_full")} disabled={!draft.body.trim()}>
-                    <Brain size={18} />
-                    <span>专家审阅全文</span>
-                    <small>更慢，费用更高</small>
-                  </button>
-                  <button onClick={() => handleAiAction("tag")} disabled={!draft.body.trim()}>
-                    <Tags size={18} />
-                    <span>补标签和相关词</span>
-                    <small>便宜模型或本地估算</small>
-                  </button>
-                </>
-              )}
-            </div>
-
-            <div
-              className={`mobile-more-backdrop ${mobileMoreOpen ? "open" : ""}`}
-              onClick={() => setMobileMoreOpen(false)}
-              aria-hidden="true"
-            />
-            <div className={`mobile-more-menu ${mobileMoreOpen ? "open" : ""}`}>
-              <button onClick={openModelSettings}>
-                <Settings size={18} />
-                <span>模型设置</span>
-              </button>
-              <button onClick={exportFromMobileMenu} disabled={!cards.length}>
-                <Download size={18} />
-                <span>导出卡片</span>
-              </button>
-              <button onClick={openImportPicker}>
-                <FileUp size={18} />
-                <span>导入卡片</span>
-              </button>
-              <button
-                className="danger-action"
-                onClick={() => {
-                  setMobileMoreOpen(false);
-                  handleDeleteCard();
-                }}
-              >
-                <Trash2 size={18} />
-                <span>删除卡片</span>
-              </button>
-            </div>
-
-            <nav className="mobile-bottom-actions" aria-label="手机快捷操作">
-              <button onClick={showMobileLibrary}>
-                <Library size={19} />
-                <span>词库</span>
-              </button>
-              <button onClick={toggleEditorMode}>
-                {editorMode === "edit" ? <Eye size={19} /> : <Pencil size={19} />}
-                <span>{editorMode === "edit" ? "预览" : "编辑"}</span>
-              </button>
-              <button onClick={toggleMobileAiPanel}>
-                {aiBusy ? <Loader2 className="spin" size={19} /> : <Sparkles size={19} />}
-                <span>AI 操作</span>
-              </button>
-              <button className="primary-action" onClick={handleSaveCard}>
-                <Save size={19} />
-                <span>保存</span>
-              </button>
-            </nav>
           </section>
+
+          <div
+            className={`mobile-ai-backdrop ${mobileAiOpen ? "open" : ""}`}
+            onClick={() => setMobileAiOpen(false)}
+            aria-hidden="true"
+          />
+          <div className={`mobile-ai-menu ${mobileAiOpen ? "open" : ""}`}>
+            <div className="mobile-ai-menu-head">
+              <strong>AI 操作</strong>
+              <span>{modelRouteText(modelDisplay, aiBusy)}</span>
+            </div>
+            {aiBusy ? (
+              <button className="danger-action" onClick={cancelAiRequest}>
+                <X size={18} />
+                <span>取消当前请求</span>
+              </button>
+            ) : (
+              <>
+                <button onClick={() => handleAiAction("quick")}>
+                  <Sparkles size={18} />
+                  <span>快速解释</span>
+                  <small>优先快模型</small>
+                </button>
+                <button onClick={() => handleAiAction("polish")}>
+                  <Pencil size={18} />
+                  <span>高质量整理</span>
+                  <small>把正文整理成 Markdown</small>
+                </button>
+                <button onClick={() => handleAiAction("review_section")} disabled={!draft.body.trim()}>
+                  <Brain size={18} />
+                  <span>专家审阅当前段落</span>
+                  <small>更快，适合手机端</small>
+                </button>
+                <button onClick={() => handleAiAction("review_full")} disabled={!draft.body.trim()}>
+                  <Brain size={18} />
+                  <span>专家审阅全文</span>
+                  <small>更慢，费用更高</small>
+                </button>
+                <button onClick={() => handleAiAction("tag")} disabled={!draft.body.trim()}>
+                  <Tags size={18} />
+                  <span>补标签和相关词</span>
+                  <small>便宜模型或本地估算</small>
+                </button>
+              </>
+            )}
+          </div>
+
+          <div
+            className={`mobile-more-backdrop ${mobileMoreOpen ? "open" : ""}`}
+            onClick={() => setMobileMoreOpen(false)}
+            aria-hidden="true"
+          />
+          <div className={`mobile-more-menu ${mobileMoreOpen ? "open" : ""}`}>
+            <button onClick={openModelSettings}>
+              <Settings size={18} />
+              <span>模型设置</span>
+            </button>
+            <button onClick={exportFromMobileMenu} disabled={!cards.length}>
+              <Download size={18} />
+              <span>导出卡片</span>
+            </button>
+            <button onClick={openImportPicker}>
+              <FileUp size={18} />
+              <span>导入卡片</span>
+            </button>
+            <button
+              className="danger-action"
+              onClick={() => {
+                setMobileMoreOpen(false);
+                handleDeleteCard();
+              }}
+            >
+              <Trash2 size={18} />
+              <span>删除卡片</span>
+            </button>
+          </div>
+
+          <nav className="mobile-bottom-actions" aria-label="手机快捷操作">
+            <button
+              className={mobilePane === "library" ? "active" : ""}
+              onClick={showMobileLibrary}
+            >
+              <Library size={19} />
+              <span>词库</span>
+            </button>
+            <button onClick={mobilePane === "library" ? showMobileDetail : toggleEditorMode}>
+              {mobilePane === "library" ? (
+                <BookOpen size={19} />
+              ) : editorMode === "edit" ? (
+                <Eye size={19} />
+              ) : (
+                <Pencil size={19} />
+              )}
+              <span>
+                {mobilePane === "library"
+                  ? "详情"
+                  : editorMode === "edit"
+                    ? "预览"
+                    : "编辑"}
+              </span>
+            </button>
+            <button onClick={toggleMobileAiPanel}>
+              {aiBusy ? <Loader2 className="spin" size={19} /> : <Sparkles size={19} />}
+              <span>AI 操作</span>
+            </button>
+            <button className="primary-action" onClick={handleSaveCard}>
+              <Save size={19} />
+              <span>保存</span>
+            </button>
+          </nav>
         </main>
       ) : (
         <main className="settings-page">
