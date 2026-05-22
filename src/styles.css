@@ -3049,3 +3049,333 @@ details.budget-settings:not([open]) .budget-settings-head {
 .app-shell.mobile-layout .related-card-item small {
   text-align: left;
 }
+
+/* Mobile Liquid Glass layer. Scoped to the app-style phone layout so desktop stays quiet. */
+.app-shell.mobile-layout {
+  --mobile-glass-page: #f3f7fb;
+  --mobile-glass: rgba(255, 255, 255, 0.66);
+  --mobile-glass-strong: rgba(255, 255, 255, 0.84);
+  --mobile-glass-soft: rgba(255, 255, 255, 0.52);
+  --mobile-glass-control: rgba(255, 255, 255, 0.62);
+  --mobile-glass-border: rgba(126, 147, 163, 0.28);
+  --mobile-glass-border-strong: rgba(102, 124, 142, 0.38);
+  --mobile-glass-highlight: rgba(255, 255, 255, 0.72);
+  --mobile-glass-shadow: 0 16px 42px rgba(31, 41, 51, 0.12);
+  --mobile-glass-shadow-soft: 0 10px 28px rgba(31, 41, 51, 0.08);
+  --mobile-glass-inner: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  --surface: rgba(255, 255, 255, 0.82);
+  --surface-soft: rgba(245, 249, 252, 0.78);
+  --surface-hover: rgba(237, 246, 247, 0.84);
+  --line: var(--mobile-glass-border);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.84) 0, rgba(245, 249, 252, 0.78) 42%),
+    linear-gradient(135deg, #f6fbff 0%, #eef8f5 38%, #f8f7ff 72%, #f7fbff 100%);
+  color: #162435;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.app-shell.mobile-layout .app-header,
+.app-shell.mobile-layout .view-tabs,
+.app-shell.mobile-layout .library-mode-tabs,
+.app-shell.mobile-layout .search-box,
+.app-shell.mobile-layout .knowledge-view-list button,
+.app-shell.mobile-layout .knowledge-view-summary,
+.app-shell.mobile-layout .knowledge-view-empty,
+.app-shell.mobile-layout .card-list-item,
+.app-shell.mobile-layout .provider-pill,
+.app-shell.mobile-layout .card-info-details,
+.app-shell.mobile-layout .section-preview-toolbar,
+.app-shell.mobile-layout .markdown-section,
+.app-shell.mobile-layout .related-cards-section,
+.app-shell.mobile-layout .related-card-item,
+.app-shell.mobile-layout .memory-note,
+.app-shell.mobile-layout .budget-note,
+.app-shell.mobile-layout .notice,
+.app-shell.mobile-layout .install-banner,
+.app-shell.mobile-layout .mobile-bottom-actions,
+.app-shell.mobile-layout .mobile-ai-menu.open,
+.app-shell.mobile-layout .mobile-more-menu.open {
+  border-color: var(--mobile-glass-border);
+  background: var(--mobile-glass);
+  box-shadow: var(--mobile-glass-inner), var(--mobile-glass-shadow-soft);
+  -webkit-backdrop-filter: blur(22px) saturate(1.35);
+  backdrop-filter: blur(22px) saturate(1.35);
+}
+
+.app-shell.mobile-layout .app-header {
+  border-bottom-color: rgba(126, 147, 163, 0.22);
+  background: rgba(250, 253, 255, 0.72);
+  box-shadow: 0 10px 30px rgba(31, 41, 51, 0.08);
+}
+
+.app-shell.mobile-layout .brand-mark {
+  border: 1px solid rgba(255, 255, 255, 0.26);
+  background: linear-gradient(145deg, #162435, #24394d);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    0 8px 20px rgba(22, 36, 53, 0.18);
+}
+
+.app-shell.mobile-layout button {
+  border-color: var(--mobile-glass-border);
+  background: var(--mobile-glass-control);
+  box-shadow: var(--mobile-glass-inner);
+}
+
+.app-shell.mobile-layout button:hover:not(:disabled) {
+  border-color: var(--mobile-glass-border-strong);
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.app-shell.mobile-layout button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.app-shell.mobile-layout .primary-action,
+.app-shell.mobile-layout .mobile-fab {
+  border-color: rgba(15, 118, 110, 0.44);
+  background: linear-gradient(145deg, rgba(17, 139, 129, 0.94), rgba(10, 95, 88, 0.96));
+  color: white;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.24),
+    0 14px 32px rgba(15, 118, 110, 0.25);
+}
+
+.app-shell.mobile-layout .primary-action:hover:not(:disabled),
+.app-shell.mobile-layout .mobile-fab:hover:not(:disabled) {
+  background: linear-gradient(145deg, rgba(19, 152, 141, 0.96), rgba(9, 88, 82, 0.98));
+  color: white;
+}
+
+.app-shell.mobile-layout .danger-action {
+  color: var(--danger);
+}
+
+.app-shell.mobile-layout .danger-action:hover:not(:disabled) {
+  border-color: rgba(248, 113, 113, 0.32);
+  background: rgba(255, 242, 242, 0.78);
+}
+
+.app-shell.mobile-layout .view-tabs,
+.app-shell.mobile-layout .library-mode-tabs {
+  padding: 4px;
+}
+
+.app-shell.mobile-layout .view-tabs button,
+.app-shell.mobile-layout .library-mode-tabs button {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.app-shell.mobile-layout .view-tabs button.active,
+.app-shell.mobile-layout .library-mode-tabs button.active {
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--text);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.78),
+    0 4px 14px rgba(31, 41, 51, 0.08);
+}
+
+.app-shell.mobile-layout .search-box {
+  min-height: 48px;
+  padding: 0 12px;
+}
+
+.app-shell.mobile-layout .search-box input {
+  background: transparent;
+}
+
+.app-shell.mobile-layout .tag-filter button {
+  border-color: rgba(126, 147, 163, 0.22);
+  background: rgba(255, 255, 255, 0.34);
+  color: #536371;
+}
+
+.app-shell.mobile-layout .tag-filter button.active {
+  border-color: rgba(15, 118, 110, 0.24);
+  background: rgba(229, 248, 245, 0.76);
+  color: var(--teal-strong);
+}
+
+.app-shell.mobile-layout .knowledge-view-list button.selected,
+.app-shell.mobile-layout .card-list-item.selected,
+.app-shell.mobile-layout .markdown-section.matched {
+  border-color: rgba(15, 118, 110, 0.32);
+  background: rgba(235, 250, 248, 0.78);
+  box-shadow:
+    var(--mobile-glass-inner),
+    0 12px 32px rgba(15, 118, 110, 0.11);
+}
+
+.app-shell.mobile-layout .card-list-item {
+  border-radius: 8px;
+}
+
+.app-shell.mobile-layout .card-list-item:hover:not(:disabled),
+.app-shell.mobile-layout .knowledge-view-list button:hover:not(:disabled),
+.app-shell.mobile-layout .related-card-item:hover:not(:disabled) {
+  border-color: var(--mobile-glass-border-strong);
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.app-shell.mobile-layout .provider-pill,
+.app-shell.mobile-layout .memory-note,
+.app-shell.mobile-layout .budget-note {
+  color: #49606f;
+}
+
+.app-shell.mobile-layout .document-head {
+  border-radius: 8px;
+}
+
+.app-shell.mobile-layout .title-input,
+.app-shell.mobile-layout .pronunciation-input {
+  background: transparent;
+}
+
+.app-shell.mobile-layout .pronunciation-input {
+  color: rgba(84, 101, 115, 0.58);
+}
+
+.app-shell.mobile-layout .card-info-details summary {
+  color: #405363;
+}
+
+.app-shell.mobile-layout .card-info-details input {
+  border-color: rgba(126, 147, 163, 0.22);
+  background: rgba(255, 255, 255, 0.54);
+}
+
+.app-shell.mobile-layout .body-editor,
+.app-shell.mobile-layout .markdown-preview,
+.app-shell.mobile-layout .preview-empty {
+  color: #172638;
+}
+
+.app-shell.mobile-layout .markdown-section.open {
+  background: var(--mobile-glass-strong);
+}
+
+.app-shell.mobile-layout .markdown-section-toggle {
+  background: transparent;
+}
+
+.app-shell.mobile-layout .markdown-section-toggle:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.46);
+}
+
+.app-shell.mobile-layout .markdown-preview blockquote,
+.app-shell.mobile-layout .markdown-preview-intro blockquote,
+.app-shell.mobile-layout .markdown-section-body blockquote {
+  border-left-color: rgba(15, 118, 110, 0.36);
+  background: rgba(242, 249, 249, 0.62);
+}
+
+.app-shell.mobile-layout .markdown-preview code,
+.app-shell.mobile-layout .markdown-preview-intro code,
+.app-shell.mobile-layout .markdown-section-body code {
+  border-color: rgba(126, 147, 163, 0.24);
+  background: rgba(244, 248, 250, 0.88);
+}
+
+.app-shell.mobile-layout .markdown-preview pre,
+.app-shell.mobile-layout .markdown-preview-intro pre,
+.app-shell.mobile-layout .markdown-section-body pre,
+.app-shell.mobile-layout .markdown-preview .katex-display,
+.app-shell.mobile-layout .markdown-preview-intro .katex-display,
+.app-shell.mobile-layout .markdown-section-body .katex-display {
+  border-color: rgba(126, 147, 163, 0.24);
+  background: rgba(250, 252, 253, 0.92);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.76);
+}
+
+.app-shell.mobile-layout .markdown-preview table,
+.app-shell.mobile-layout .markdown-preview-intro table,
+.app-shell.mobile-layout .markdown-section-body table {
+  background: rgba(250, 252, 253, 0.9);
+}
+
+.app-shell.mobile-layout .markdown-preview th,
+.app-shell.mobile-layout .markdown-preview-intro th,
+.app-shell.mobile-layout .markdown-section-body th {
+  background: rgba(239, 246, 248, 0.92);
+}
+
+.app-shell.mobile-layout .mobile-bottom-actions {
+  border-top-color: rgba(126, 147, 163, 0.24);
+  background: rgba(250, 253, 255, 0.7);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.68),
+    0 -18px 42px rgba(31, 41, 51, 0.12);
+}
+
+.app-shell.mobile-layout .mobile-bottom-actions button {
+  border-color: transparent;
+  background: rgba(255, 255, 255, 0.18);
+  box-shadow: none;
+}
+
+.app-shell.mobile-layout .mobile-bottom-actions button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.app-shell.mobile-layout .mobile-ai-backdrop.open,
+.app-shell.mobile-layout .mobile-more-backdrop.open {
+  background: rgba(21, 33, 45, 0.24);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+
+.app-shell.mobile-layout .mobile-ai-menu.open,
+.app-shell.mobile-layout .mobile-more-menu.open {
+  border-radius: 12px;
+  background: rgba(252, 254, 255, 0.78);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.76),
+    0 24px 60px rgba(31, 41, 51, 0.2);
+}
+
+.app-shell.mobile-layout .mobile-ai-menu-head {
+  border-bottom-color: rgba(126, 147, 163, 0.2);
+}
+
+.app-shell.mobile-layout .mobile-ai-menu button,
+.app-shell.mobile-layout .mobile-more-menu button {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+.app-shell.mobile-layout .mobile-ai-menu button:hover:not(:disabled),
+.app-shell.mobile-layout .mobile-more-menu button:hover:not(:disabled) {
+  background: rgba(242, 247, 250, 0.78);
+}
+
+.app-shell.mobile-preview {
+  border-color: rgba(126, 147, 163, 0.26);
+  background: var(--mobile-glass-page);
+  box-shadow: 0 0 42px rgba(31, 41, 51, 0.12);
+}
+
+@supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  .app-shell.mobile-layout .app-header,
+  .app-shell.mobile-layout .view-tabs,
+  .app-shell.mobile-layout .library-mode-tabs,
+  .app-shell.mobile-layout .search-box,
+  .app-shell.mobile-layout .knowledge-view-list button,
+  .app-shell.mobile-layout .knowledge-view-summary,
+  .app-shell.mobile-layout .knowledge-view-empty,
+  .app-shell.mobile-layout .card-list-item,
+  .app-shell.mobile-layout .provider-pill,
+  .app-shell.mobile-layout .card-info-details,
+  .app-shell.mobile-layout .section-preview-toolbar,
+  .app-shell.mobile-layout .markdown-section,
+  .app-shell.mobile-layout .related-cards-section,
+  .app-shell.mobile-layout .related-card-item,
+  .app-shell.mobile-layout .mobile-bottom-actions,
+  .app-shell.mobile-layout .mobile-ai-menu.open,
+  .app-shell.mobile-layout .mobile-more-menu.open {
+    background: rgba(255, 255, 255, 0.93);
+  }
+}
