@@ -1613,7 +1613,28 @@ details.budget-settings:not([open]) .budget-settings-head {
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.provider-card-head::-webkit-details-marker {
+  display: none;
+}
+
+.provider-card-head::before {
+  content: "▸";
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+  transition: transform 140ms ease;
+}
+
+.provider-card[open] .provider-card-head {
   margin-bottom: 12px;
+}
+
+.provider-card[open] .provider-card-head::before {
+  transform: rotate(90deg);
 }
 
 .provider-card-head strong,
@@ -1625,6 +1646,11 @@ details.budget-settings:not([open]) .budget-settings-head {
 .provider-hint {
   color: var(--muted);
   font-size: 13px;
+}
+
+.provider-card-head > div {
+  min-width: 0;
+  flex: 1;
 }
 
 .provider-hint {
@@ -2513,6 +2539,25 @@ details.budget-settings:not([open]) .budget-settings-head {
   padding: 0 10px;
 }
 
+.app-shell.mobile-layout .provider-card {
+  padding: 12px;
+}
+
+.app-shell.mobile-layout .provider-card-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+}
+
+.app-shell.mobile-layout .provider-card-head::before {
+  line-height: 1;
+}
+
+.app-shell.mobile-layout .provider-card-head button {
+  min-width: 58px;
+}
+
 .app-shell.mobile-layout .view-tabs {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2537,6 +2582,20 @@ details.budget-settings:not([open]) .budget-settings-head {
 
 .app-shell.mobile-layout .install-actions {
   justify-content: space-between;
+}
+
+.app-shell.mobile-layout .settings-page {
+  padding: 10px 10px calc(86px + env(safe-area-inset-bottom));
+}
+
+.app-shell.mobile-layout .settings-panel {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .app-shell.mobile-layout .workspace.mobile-pane-detail .sidebar,
@@ -3326,17 +3385,16 @@ details.budget-settings:not([open]) .budget-settings-head {
 }
 
 .app-shell.mobile-layout .mobile-bottom-actions .primary-action {
-  border-color: rgba(15, 118, 110, 0.34);
-  background: linear-gradient(145deg, rgba(17, 139, 129, 0.94), rgba(10, 95, 88, 0.96));
-  color: white;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.24),
-    0 8px 18px rgba(15, 118, 110, 0.18);
+  border-color: transparent;
+  background: rgba(229, 248, 245, 0.72);
+  color: var(--teal-strong);
+  box-shadow: none;
 }
 
 .app-shell.mobile-layout .mobile-bottom-actions .primary-action:hover:not(:disabled) {
-  background: linear-gradient(145deg, rgba(19, 152, 141, 0.96), rgba(9, 88, 82, 0.98));
-  color: white;
+  border-color: transparent;
+  background: rgba(218, 246, 242, 0.86);
+  color: var(--teal-strong);
 }
 
 .app-shell.mobile-layout .mobile-fab {

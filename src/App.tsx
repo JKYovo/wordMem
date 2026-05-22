@@ -896,6 +896,7 @@ function App() {
   const [mobilePane, setMobilePane] = useState<MobilePane>("detail");
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const [mobileAiOpen, setMobileAiOpen] = useState(false);
+  const [expandedProviderIds, setExpandedProviderIds] = useState<AiProviderId[]>([]);
   const [activeSectionId, setActiveSectionId] = useState("");
   const [mobileLayout, setMobileLayout] = useState(() =>
     isMobileLayoutPreferred(forceMobilePreview)
@@ -918,6 +919,16 @@ function App() {
   const [syncStatus, setSyncStatus] = useState("");
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const aiAbortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    if (!settings) {
+      return;
+    }
+
+    setExpandedProviderIds((current) =>
+      current.includes(settings.activeProvider) ? current : [...current, settings.activeProvider]
+    );
+  }, [settings?.activeProvider]);
 
   useEffect(() => {
     const mediaQuery = window.matchMedia("(max-width: 860px), (pointer: coarse)");
@@ -3200,8 +3211,22 @@ function App() {
                 const isCustomModel = selectedModelValue(provider) === CUSTOM_MODEL_VALUE;
 
                 return (
-                  <section className="provider-card" key={providerId}>
-                    <div className="provider-card-head">
+                  <details
+                    className="provider-card"
+                    key={providerId}
+                    open={expandedProviderIds.includes(providerId)}
+                    onToggle={(event) => {
+                      const isOpen = event.currentTarget.open;
+                      setExpandedProviderIds((current) =>
+                        isOpen
+                          ? current.includes(providerId)
+                            ? current
+                            : [...current, providerId]
+                          : current.filter((id) => id !== providerId)
+                      );
+                    }}
+                  >
+                    <summary className="provider-card-head">
                       <div>
                         <strong>{provider.label}</strong>
                         <span>
@@ -3210,11 +3235,18 @@ function App() {
                       </div>
                       <button
                         className={settings.activeProvider === providerId ? "active" : ""}
-                        onClick={() => setSettings({ ...settings, activeProvider: providerId })}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          setSettings({ ...settings, activeProvider: providerId });
+                          setExpandedProviderIds((current) =>
+                            current.includes(providerId) ? current : [...current, providerId]
+                          );
+                        }}
                       >
                         使用
                       </button>
-                    </div>
+                    </summary>
 
                     <div className="provider-basic">
                       <label className="field">
@@ -3363,7 +3395,7 @@ function App() {
                         Responses API。如果请求返回 404，再尝试把 Base URL 改成带 `/v1` 的地址。
                       </p>
                     )}
-                  </section>
+                  </details>
                 );
               })}
             </div>

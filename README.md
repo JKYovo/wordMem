@@ -14,7 +14,7 @@ WordMem 当前默认面向深度学习、机器学习、强化学习、机器人
 - **知识视图**：按强化学习、机器人控制、仿真评测、GMR / retargeting 等视角浏览卡片。
 - **标签整理**：可用本地规则或 DeepSeek flash 合并相似标签，保留一词多标签。
 - **后端同步**：可用 SQLite 同步多设备数据，API Key 使用 AES-256-GCM 加密落库。
-- **移动端友好**：支持 PWA、手机布局预览和 Capacitor Android APK。
+- **移动端友好**：支持 PWA、手机布局预览、Liquid Glass 风格和 Capacitor Android APK。
 
 ## 快速开始
 
@@ -95,6 +95,16 @@ AI 解释会生成 JSON 外壳，方便提取字段；其中 `body` 是可直接
 - 打开卡片时，正文下方会按术语、共同标签、上下文和正文关键词推荐相关卡片。
 - 相关卡片只用于阅读跳转，不修改卡片正文、标签或同步数据。
 
+### 移动端体验
+
+手机端采用 App 化的“详情 / 词库”两屏布局，减少嵌套滚动：
+
+- 默认打开卡片预览；底部固定操作栏提供 `词库`、`详情/编辑/预览`、`AI 操作`、`保存`。
+- 词库页使用全屏列表，右下角 `+` 用于新建卡片；按钮会避开底部操作栏。
+- 详情页标题、音标、卡片信息、Markdown 段落和相关卡片按手机宽度优化。
+- 视觉上使用浅色 Liquid Glass 风格；正文、公式、代码块和表格保持高对比可读。
+- 设置页在手机端使用和词库一致的页面宽度，provider 卡片可折叠，避免表单过长。
+
 ## Provider 配置
 
 在应用「设置」里配置 provider、API Key 和模型。
@@ -113,6 +123,8 @@ AI 解释会生成 JSON 外壳，方便提取字段；其中 `body` 是可直接
 - Reasoning effort
 - 输入 / 输出 `$ / 1M tokens` 单价
 - Responses API 的 `store: false`
+
+Provider 卡片默认只展开当前正在使用的 provider；其它 provider 会折叠，只显示名称、当前模型、接口类型和 `使用` 按钮。点击卡片标题可以展开 API Key、模型选择和高级设置。
 
 > 提示：DeepSeek 的 OpenAI-compatible 主要指 Chat Completions 格式，不代表支持 OpenAI 的 Responses API。WordMem 后端会强制 DeepSeek 走 `chat/completions`，避免误配成 `/responses` 后返回 404。
 
