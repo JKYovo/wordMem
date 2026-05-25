@@ -1,4 +1,5 @@
 import type { KnowledgeCard, StructuredDraft } from "./types";
+import { DEFAULT_LIBRARY_ID } from "./defaults";
 
 const LEGACY_BODY_SECTIONS: Array<[keyof KnowledgeCard, string]> = [
   ["shortMeaning", "简短解释"],
@@ -58,6 +59,7 @@ export function normalizeKnowledgeCard(card: Partial<KnowledgeCard>): KnowledgeC
 
   return {
     id: clean(card.id) || `card_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+    libraryId: clean(card.libraryId) || DEFAULT_LIBRARY_ID,
     term: clean(card.term) || clean(wrappedDraft?.term),
     body: bodyFromCard(card),
     sourceContext: clean(card.sourceContext) || clean(wrappedDraft?.sourceContext),

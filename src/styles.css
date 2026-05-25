@@ -72,6 +72,18 @@ button:disabled {
   opacity: 0.52;
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 input,
 textarea,
 select {
@@ -149,6 +161,96 @@ select:focus {
   color: var(--muted);
   font-size: 13px;
   white-space: nowrap;
+}
+
+.library-switcher {
+  min-width: 0;
+  min-height: 42px;
+  display: inline-grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 5px 4px 10px;
+  border: 1px solid #d9e7e4;
+  border-radius: 8px;
+  background: #f7fbfa;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.88);
+}
+
+.library-switcher-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--teal-strong);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.library-switcher-label svg {
+  color: var(--teal);
+}
+
+.library-icon-options {
+  position: relative;
+  display: inline-grid;
+  align-items: center;
+  padding: 4px;
+  border: 1px solid rgba(126, 147, 163, 0.2);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.56);
+  overflow: hidden;
+}
+
+.library-icon-options::before {
+  content: "";
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: 4px;
+  width: calc((100% - 8px) / var(--library-count, 2));
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.86),
+    0 4px 14px rgba(31, 41, 51, 0.08);
+  transform: translateX(calc(var(--library-active-index, 0) * 100%));
+  transition:
+    transform 180ms ease,
+    background-color 180ms ease;
+}
+
+.library-icon-options button {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  min-width: 34px;
+  min-height: 34px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  padding: 0;
+}
+
+.library-icon-options button:hover:not(:disabled) {
+  background: transparent;
+  color: var(--text);
+}
+
+.library-icon-options button.active {
+  background: transparent;
+  color: var(--text);
+  box-shadow: none;
+}
+
+.library-icon-options button svg {
+  display: block;
+  justify-self: center;
+  align-self: center;
+  margin: auto;
 }
 
 .budget-chip {
@@ -366,6 +468,30 @@ select:focus {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface-soft);
+}
+
+.library-scope-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.library-scope-tabs button {
+  min-height: 30px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 0 10px;
+}
+
+.library-scope-tabs button.active {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 1px 2px rgba(31, 41, 51, 0.08);
 }
 
 .library-mode-tabs button {
@@ -1707,6 +1833,9 @@ details.budget-settings:not([open]) .budget-settings-head {
 }
 
 .mobile-library-head,
+.mobile-library-summary,
+.mobile-library-filter-toggle,
+.mobile-library-filter-panel,
 .mobile-fab,
 .mobile-bottom-actions,
 .mobile-ai-backdrop,
@@ -2558,6 +2687,49 @@ details.budget-settings:not([open]) .budget-settings-head {
   min-width: 58px;
 }
 
+.app-shell.mobile-layout .library-switcher {
+  width: auto;
+  min-width: 0;
+  grid-template-columns: auto auto;
+  align-items: center;
+  padding: 4px 4px 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.app-shell.mobile-layout .library-switcher-label {
+  padding-left: 0;
+  white-space: nowrap;
+}
+
+.app-shell.mobile-layout .library-icon-options {
+  align-items: center;
+  justify-items: center;
+  height: 46px;
+  background: rgba(255, 255, 255, 0.56);
+}
+
+.app-shell.mobile-layout .library-icon-options::before {
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.app-shell.mobile-layout .library-icon-options button {
+  width: 38px;
+  min-width: 38px;
+  height: 38px;
+  min-height: 38px;
+  max-height: 38px;
+  display: grid;
+  place-items: center;
+  line-height: 1;
+  background: transparent;
+}
+
+.app-shell.mobile-layout .library-icon-options button.active {
+  background: transparent;
+  color: var(--text);
+}
+
 .app-shell.mobile-layout .view-tabs {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2619,28 +2791,41 @@ details.budget-settings:not([open]) .budget-settings-head {
 }
 
 .app-shell.mobile-layout .mobile-library-head {
+  display: none;
+}
+
+.app-shell.mobile-layout .mobile-library-summary {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 10px;
-  padding: 2px 2px 0;
+  padding: 4px 2px 0;
 }
 
-.app-shell.mobile-layout .mobile-library-head strong,
-.app-shell.mobile-layout .mobile-library-head span {
+.app-shell.mobile-layout .mobile-library-summary strong,
+.app-shell.mobile-layout .mobile-library-summary span,
+.app-shell.mobile-layout .mobile-library-summary small {
   display: block;
 }
 
-.app-shell.mobile-layout .mobile-library-head strong {
+.app-shell.mobile-layout .mobile-library-summary strong {
   font-size: 22px;
   line-height: 1.2;
 }
 
-.app-shell.mobile-layout .mobile-library-head span {
+.app-shell.mobile-layout .mobile-library-summary span {
   margin-top: 2px;
   color: var(--muted);
   font-size: 13px;
+}
+
+.app-shell.mobile-layout .mobile-library-summary small {
+  max-width: 44%;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: right;
 }
 
 .app-shell.mobile-layout .sidebar .toolbar {
@@ -2655,13 +2840,163 @@ details.budget-settings:not([open]) .budget-settings-head {
   box-shadow: 0 8px 18px rgba(31, 41, 51, 0.06);
 }
 
-.app-shell.mobile-layout .sidebar .tag-filter {
+.app-shell.mobile-layout .mobile-library-filter-toggle {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  justify-content: stretch;
+  gap: 8px;
   margin-top: 10px;
-  padding-bottom: 6px;
+  min-height: 44px;
+  padding: 0 12px;
+  text-align: left;
 }
 
-.app-shell.mobile-layout .sidebar .card-count {
-  margin: 4px 2px;
+.app-shell.mobile-layout .mobile-library-filter-toggle span {
+  justify-self: start;
+  color: var(--text);
+  font-weight: 700;
+}
+
+.app-shell.mobile-layout .mobile-library-filter-toggle small {
+  min-width: 22px;
+  min-height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: rgba(229, 248, 245, 0.8);
+  color: var(--teal-strong);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.app-shell.mobile-layout .mobile-library-filter-toggle > svg:last-child {
+  transition: transform 160ms ease;
+}
+
+.app-shell.mobile-layout .mobile-library-filter-toggle.open > svg:last-child {
+  transform: rotate(180deg);
+}
+
+.app-shell.mobile-layout .mobile-library-filter-panel {
+  display: none;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.app-shell.mobile-layout .mobile-library-filter-panel.open {
+  display: grid;
+}
+
+.app-shell.mobile-layout .mobile-filter-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+}
+
+.app-shell.mobile-layout .mobile-segment-control {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0;
+  min-width: 0;
+  padding: 4px;
+  overflow: hidden;
+  border: 1px solid rgba(126, 147, 163, 0.2);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.56);
+}
+
+.app-shell.mobile-layout .mobile-segment-control::before {
+  content: "";
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: 4px;
+  width: calc((100% - 8px) / 2);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.86),
+    0 4px 14px rgba(31, 41, 51, 0.08);
+  transition: transform 170ms ease;
+}
+
+.app-shell.mobile-layout .mobile-segment-control.is-right::before {
+  transform: translateX(100%);
+}
+
+.app-shell.mobile-layout .mobile-segment-control button {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+  min-height: 34px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 700;
+  white-space: nowrap;
+  box-shadow: none;
+}
+
+.app-shell.mobile-layout .mobile-segment-control button.active {
+  background: transparent;
+  color: var(--text);
+  box-shadow: none;
+}
+
+.app-shell.mobile-layout .mobile-segment-control button:disabled {
+  opacity: 0.42;
+}
+
+.app-shell.mobile-layout .mobile-filter-section {
+  display: grid;
+  gap: 7px;
+}
+
+.app-shell.mobile-layout .mobile-filter-section-title {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+@media (max-width: 380px) {
+  .app-shell.mobile-layout .mobile-filter-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.app-shell.mobile-layout .mobile-topic-chips,
+.app-shell.mobile-layout .mobile-library-filter-panel .tag-filter {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.app-shell.mobile-layout .mobile-topic-chips button,
+.app-shell.mobile-layout .mobile-library-filter-panel .tag-filter button {
+  min-height: 34px;
+  white-space: nowrap;
+}
+
+.app-shell.mobile-layout .mobile-topic-chips button.active {
+  border-color: rgba(15, 118, 110, 0.28);
+  background: rgba(229, 248, 245, 0.76);
+  color: var(--teal-strong);
+}
+
+.app-shell.mobile-layout .sidebar > .library-scope-tabs,
+.app-shell.mobile-layout .sidebar > .library-mode-tabs,
+.app-shell.mobile-layout .sidebar > .knowledge-view-panel,
+.app-shell.mobile-layout .sidebar > .tag-filter,
+.app-shell.mobile-layout .sidebar > .card-count {
+  display: none;
 }
 
 .app-shell.mobile-layout .card-list {
@@ -3067,6 +3402,12 @@ details.budget-settings:not([open]) .budget-settings-head {
   background: var(--surface-soft);
 }
 
+.app-shell.mobile-layout .mobile-library-filter-panel .library-scope-tabs,
+.app-shell.mobile-layout .mobile-library-filter-panel .library-mode-tabs {
+  margin-top: 0;
+}
+
+.app-shell.mobile-layout .library-scope-tabs,
 .app-shell.mobile-layout .library-mode-tabs {
   margin-top: 10px;
 }
@@ -3135,8 +3476,12 @@ details.budget-settings:not([open]) .budget-settings-head {
 
 .app-shell.mobile-layout .app-header,
 .app-shell.mobile-layout .view-tabs,
+.app-shell.mobile-layout .library-switcher,
+.app-shell.mobile-layout .library-scope-tabs,
 .app-shell.mobile-layout .library-mode-tabs,
 .app-shell.mobile-layout .search-box,
+.app-shell.mobile-layout .mobile-library-filter-toggle,
+.app-shell.mobile-layout .mobile-library-filter-panel.open,
 .app-shell.mobile-layout .knowledge-view-list button,
 .app-shell.mobile-layout .knowledge-view-summary,
 .app-shell.mobile-layout .knowledge-view-empty,
@@ -3190,6 +3535,31 @@ details.budget-settings:not([open]) .budget-settings-head {
   transform: translateY(1px);
 }
 
+.app-shell.mobile-layout .library-icon-options button,
+.app-shell.mobile-layout .library-icon-options button:hover:not(:disabled),
+.app-shell.mobile-layout .library-icon-options button.active {
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  color: var(--text);
+  box-shadow: none;
+}
+
+.app-shell.mobile-layout .library-icon-options button:not(.active) {
+  color: var(--muted);
+}
+
+.app-shell.mobile-layout .library-icon-options button svg {
+  grid-area: 1 / 1;
+  display: block;
+  width: 18px;
+  height: 18px;
+  place-self: center;
+  margin: 0;
+}
+
 .app-shell.mobile-layout .primary-action,
 .app-shell.mobile-layout .mobile-fab {
   border-color: rgba(15, 118, 110, 0.44);
@@ -3216,11 +3586,13 @@ details.budget-settings:not([open]) .budget-settings-head {
 }
 
 .app-shell.mobile-layout .view-tabs,
+.app-shell.mobile-layout .library-scope-tabs,
 .app-shell.mobile-layout .library-mode-tabs {
   padding: 4px;
 }
 
 .app-shell.mobile-layout .view-tabs button,
+.app-shell.mobile-layout .library-scope-tabs button,
 .app-shell.mobile-layout .library-mode-tabs button {
   border: 0;
   background: transparent;
@@ -3228,6 +3600,7 @@ details.budget-settings:not([open]) .budget-settings-head {
 }
 
 .app-shell.mobile-layout .view-tabs button.active,
+.app-shell.mobile-layout .library-scope-tabs button.active,
 .app-shell.mobile-layout .library-mode-tabs button.active {
   background: rgba(255, 255, 255, 0.82);
   color: var(--text);
@@ -3443,8 +3816,12 @@ details.budget-settings:not([open]) .budget-settings-head {
 @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
   .app-shell.mobile-layout .app-header,
   .app-shell.mobile-layout .view-tabs,
+  .app-shell.mobile-layout .library-switcher,
+  .app-shell.mobile-layout .library-scope-tabs,
   .app-shell.mobile-layout .library-mode-tabs,
   .app-shell.mobile-layout .search-box,
+  .app-shell.mobile-layout .mobile-library-filter-toggle,
+  .app-shell.mobile-layout .mobile-library-filter-panel.open,
   .app-shell.mobile-layout .knowledge-view-list button,
   .app-shell.mobile-layout .knowledge-view-summary,
   .app-shell.mobile-layout .knowledge-view-empty,

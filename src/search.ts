@@ -21,14 +21,17 @@ function cardHaystack(card: KnowledgeCard) {
 export function searchCards(
   cards: KnowledgeCard[],
   query: string,
-  tag: string
+  tags: string[] | string
 ): KnowledgeCard[] {
   const normalizedQuery = normalize(query);
-  const normalizedTag = normalize(tag);
+  const normalizedTags = (Array.isArray(tags) ? tags : [tags]).map(normalize).filter(Boolean);
 
   const filtered = cards.filter((card) => {
     const tagMatches =
-      !normalizedTag || card.tags.some((cardTag) => normalize(cardTag) === normalizedTag);
+      !normalizedTags.length ||
+      normalizedTags.every((selectedTag) =>
+        card.tags.some((cardTag) => normalize(cardTag) === selectedTag)
+      );
 
     if (!tagMatches) {
       return false;

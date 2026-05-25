@@ -85,6 +85,35 @@ ${request.pastedRawAnswer || "[]"}
 
 请只返回 aliases。`;
   }
+  if (taskType === "format") {
+    return `本次任务：
+只修复这张卡片正文的 Markdown / LaTeX / HTML 格式，不要改正文内容。
+
+你是“格式校对器”，不是解释器、审稿人或改写助手。必须严格遵守：
+- 不新增知识点，不删除知识点，不改变任何定义、事实、因果关系、例子、变量含义、数字、术语口径。
+- 不把正文改得更简短或更详细，不扩写、不总结、不润色语义。
+- 保持原有段落顺序和信息顺序；只在必要时为了 Markdown 渲染移动换行、空行和公式分隔符。
+- 可以删除 HTML / style / color 标签外壳，但必须保留标签里面的文字。
+- 可以把被转义的行内公式如 \\$q\\$ 改成 $q$。
+- 可以把裸 LaTeX 独立公式改成块级公式，且 $$ 必须独占一行。
+- 可以把写在段落中间的 Markdown 标题、列表、分隔线拆到独立行。
+- 可以修复明显破坏渲染的空公式块、多余空行、行尾空格。
+- 如果不确定某处是不是公式或 Markdown，不要改。
+
+必须只返回 JSON 对象，不要 Markdown 代码块。字段如下：
+{
+  "term": ${JSON.stringify(request.term || "")},
+  "pronunciation": "",
+  "sourceContext": ${JSON.stringify(request.sourceContext || "")},
+  "tags": [],
+  "body": "只包含格式修复后的 Markdown 正文"
+}
+
+原始正文：
+${request.pastedRawAnswer || request.term || "无"}
+
+请只修复 body 的格式。`;
+  }
   const relatedCardsText = relatedCards.length
     ? relatedCards
         .map(
@@ -123,6 +152,9 @@ ${request.pastedRawAnswer || "无"}
 function taskInstruction(taskType: AiTaskType) {
   if (taskType === "review") {
     return "专家审阅并润色当前正文：检查定义、公式、领域语境和表达清晰度；保留用户原意，直接返回一版更准确、更好读、可保存的 Markdown 正文。必须保留并改善已有 Markdown 结构，不要改回大段纯文本。保持已有块级公式格式；如果看到独立公式被写成 $...$ 或 \\(...\\)，必须改成 $$ 独占一行的块级公式。";
+  }
+  if (taskType === "format") {
+    return "只修复 Markdown / LaTeX / HTML 格式，不新增、不删除、不改写任何知识内容。";
   }
   if (taskType === "summarize") {
     return "后台整理旧卡片：保留核心内容，补齐 Markdown 结构、标签、易混概念和简短记忆句；不要删掉重要工作细节。";
@@ -351,6 +383,18 @@ function isHttpPageOrigin() {
   return window.location.protocol === "http:" || window.location.protocol === "https:";
 }
 
+function isCapacitorLocalOrigin() {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  const hostname = window.location.hostname;
+  return (
+    (hostname === "localhost" || hostname === "127.0.0.1") &&
+    !window.location.port
+  );
+}
+
 function pushUnique(values: string[], value: string) {
   if (value && !values.includes(value)) {
     values.push(value);
@@ -366,10 +410,23 @@ function localProxyUrls(settings: AppSettings) {
   pushUnique(backendUrls, configuredBaseUrl ? `${configuredBaseUrl}/api/ai/explain` : "");
   pushUnique(backendUrls, defaultBaseUrl ? `${defaultBaseUrl}/api/ai/explain` : "");
   backendUrls.forEach((url) => pushUnique(urls, url));
-  if (isHttpPageOrigin()) {
+  if (isHttpPageOrigin() && !isCapacitorLocalOrigin()) {
     pushUnique(urls, "/api/ai/explain");
   }
   return urls;
+}
+
+async function readProxyPayload(response: Response, proxyUrl: string) {
+  const raw = await response.text();
+  try {
+    return JSON.parse(raw);
+  } catch {
+    const looksLikeHtml = raw.trimStart().startsWith("<");
+    const hint = looksLikeHtml
+      ? "返回了 HTML 页面，不是 AI 代理 JSON。请在设置里填写电脑后端服务地址，例如 http://100.76.255.118:4173，并确认 Tailscale 和后端服务已打开。"
+      : "返回内容不是合法 JSON。";
+    throw new Error(`${proxyUrl}：${hint}`);
+  }
 }
 
 async function callLocalProxy(
@@ -381,6 +438,12 @@ async function callLocalProxy(
   const authToken = settings.backendSync?.token.trim();
   const urls = localProxyUrls(settings);
   let lastError = "";
+
+  if (!urls.length) {
+    throw new Error(
+      "手机 APK 需要通过电脑后端代理调用 AI。请在设置 -> 后端同步里填写服务地址，例如 http://100.76.255.118:4173。"
+    );
+  }
 
   for (let index = 0; index < urls.length; index += 1) {
     const proxyUrl = urls[index];
@@ -424,7 +487,16 @@ async function callLocalProxy(
       throw new Error(`本地 AI 代理请求失败：${lastError}`);
     }
 
-    const payload = await response.json();
+    let payload: any;
+    try {
+      payload = await readProxyPayload(response, proxyUrl);
+    } catch (parseError) {
+      lastError = parseError instanceof Error ? parseError.message : `${proxyUrl}：响应解析失败`;
+      if (index < urls.length - 1) {
+        continue;
+      }
+      throw new Error(`本地 AI 代理请求失败：${lastError}`);
+    }
     const rawAnswer = String(payload.rawAnswer || "");
 
     return {

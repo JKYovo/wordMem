@@ -1,4 +1,5 @@
 import { normalizeKnowledgeCard } from "../cardModel";
+import { normalizeAppSettings } from "../defaults";
 import type { AppSettings, BackendSyncConfig, KnowledgeCard, UsageRecord } from "../types";
 
 export type SyncMeta = {
@@ -80,7 +81,7 @@ async function syncFetch<T>(
   init: RequestInit
 ): Promise<T> {
   if (!canUseBackendSync(settings)) {
-    throw new Error("请先启用后端同步，或使用可信自动同步模式。");
+    throw new Error("请先启用后端同步，并填写同步 token。");
   }
 
   const response = await fetch(syncApiUrl(settings, path), {
@@ -106,6 +107,8 @@ function stripLocalSyncConfig(settings: AppSettings): AppSettings {
       baseUrl: "",
       token: "",
       trustedAutoSync: false,
+      autoSyncOnStartup: false,
+      autoSyncOnSave: false,
       lastSyncedAt: "",
       pendingChanges: false,
     },
@@ -117,13 +120,15 @@ export function mergeRemoteSettings(
   localSettings: AppSettings,
   syncPatch: Partial<BackendSyncConfig> = {}
 ): AppSettings {
-  const localBackendSync = localSettings.backendSync;
-  const providers = { ...remoteSettings.providers };
+  const normalizedRemote = normalizeAppSettings(remoteSettings);
+  const normalizedLocal = normalizeAppSettings(localSettings);
+  const localBackendSync = normalizedLocal.backendSync;
+  const providers = { ...normalizedRemote.providers };
 
-  (Object.keys(localSettings.providers) as Array<keyof AppSettings["providers"]>).forEach(
+  (Object.keys(normalizedLocal.providers) as Array<keyof AppSettings["providers"]>).forEach(
     (providerId) => {
-      const remoteProvider = providers[providerId] || localSettings.providers[providerId];
-      const localProvider = localSettings.providers[providerId];
+      const remoteProvider = providers[providerId] || normalizedLocal.providers[providerId];
+      const localProvider = normalizedLocal.providers[providerId];
       providers[providerId] = {
         ...localProvider,
         ...remoteProvider,
@@ -133,15 +138,15 @@ export function mergeRemoteSettings(
     }
   );
 
-  return {
-    ...localSettings,
-    ...remoteSettings,
+  return normalizeAppSettings({
+    ...normalizedLocal,
+    ...normalizedRemote,
     providers,
     backendSync: {
       ...localBackendSync,
       ...syncPatch,
     },
-  };
+  });
 }
 
 export async function fetchSyncSnapshot(settings: AppSettings): Promise<SyncSnapshot> {
@@ -151,7 +156,7 @@ export async function fetchSyncSnapshot(settings: AppSettings): Promise<SyncSnap
 
   return {
     cards: (snapshot.cards || []).map(normalizeKnowledgeCard),
-    settings: snapshot.settings,
+    settings: snapshot.settings ? normalizeAppSettings(snapshot.settings) : null,
     usageRecords: snapshot.usageRecords || [],
     syncMeta: snapshot.syncMeta,
   };

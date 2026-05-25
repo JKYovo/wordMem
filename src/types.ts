@@ -4,14 +4,24 @@ export type ReasoningEffort = "none" | "low" | "medium" | "high" | "xhigh";
 export type AiTaskType =
   | "explain"
   | "review"
+  | "format"
   | "summarize"
   | "tag"
   | "tag_merge"
   | "memory_profile";
 export type UsageStatus = "success" | "failed" | "blocked";
 
+export type KnowledgeLibrary = {
+  id: string;
+  name: string;
+  description: string;
+  personalPreference: string;
+  defaultSourceContext: string;
+};
+
 export type KnowledgeCard = {
   id: string;
+  libraryId: string;
   term: string;
   body: string;
   sourceContext: string;
@@ -64,6 +74,8 @@ export type BackendSyncConfig = {
   baseUrl: string;
   token: string;
   trustedAutoSync?: boolean;
+  autoSyncOnStartup?: boolean;
+  autoSyncOnSave?: boolean;
   lastSyncedAt?: string;
   pendingChanges?: boolean;
 };
@@ -71,6 +83,8 @@ export type BackendSyncConfig = {
 export type AppSettings = {
   id: "app";
   activeProvider: AiProviderId;
+  activeLibraryId: string;
+  libraries: KnowledgeLibrary[];
   providers: Record<AiProviderId, ProviderConfig>;
   disableResponseStorage: boolean;
   memoryEnabled: boolean;
@@ -141,6 +155,7 @@ export type ExportPayload = {
   app: "wordmem";
   version: 1 | 2;
   exportedAt: string;
+  libraries?: KnowledgeLibrary[];
   cards: KnowledgeCard[];
 };
 

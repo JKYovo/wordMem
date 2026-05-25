@@ -207,6 +207,9 @@ function expectedOutputTokens(taskType: AiTaskType, request: AiExplainRequest) {
   if (taskType === "review") {
     return Math.min(3600, Math.max(1800, Math.ceil(pastedTokens * 0.9)));
   }
+  if (taskType === "format") {
+    return Math.min(3200, Math.max(600, Math.ceil(pastedTokens * 1.05)));
+  }
   if (taskType === "summarize") {
     return Math.min(1800, Math.max(800, Math.ceil(pastedTokens * 0.55)));
   }
@@ -406,6 +409,7 @@ function chooseModel(
     }
     if (
       taskType === "summarize" ||
+      taskType === "format" ||
       taskType === "tag" ||
       taskType === "tag_merge" ||
       taskType === "memory_profile"
@@ -424,6 +428,7 @@ function chooseModel(
   }
   if (
     taskType === "summarize" ||
+    taskType === "format" ||
     taskType === "tag" ||
     taskType === "tag_merge" ||
     taskType === "memory_profile"
@@ -451,6 +456,7 @@ function chooseReasoningEffort(
   }
   if (
     taskType === "summarize" ||
+    taskType === "format" ||
     taskType === "tag" ||
     taskType === "tag_merge" ||
     taskType === "memory_profile"
@@ -469,6 +475,9 @@ export function taskLabel(taskType: AiTaskType) {
   }
   if (taskType === "summarize") {
     return "后台整理";
+  }
+  if (taskType === "format") {
+    return "格式修复";
   }
   if (taskType === "tag") {
     return "标签摘要";

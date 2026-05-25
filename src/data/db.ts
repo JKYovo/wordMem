@@ -1,4 +1,4 @@
-import { createDefaultSettings } from "../defaults";
+import { normalizeAppSettings } from "../defaults";
 import { normalizeKnowledgeCard } from "../cardModel";
 import type { AppSettings, KnowledgeCard, UsageRecord } from "../types";
 
@@ -119,47 +119,7 @@ export async function loadSettings(): Promise<AppSettings> {
   const db = await openDatabase();
   const store = db.transaction(SETTINGS_STORE, "readonly").objectStore(SETTINGS_STORE);
   const stored = await requestToPromise<AppSettings | undefined>(store.get("app"));
-  const defaults = createDefaultSettings();
-
-  if (!stored) {
-    return defaults;
-  }
-
-  return {
-    ...defaults,
-    ...stored,
-    disableResponseStorage:
-      stored.disableResponseStorage ?? defaults.disableResponseStorage,
-    memoryEnabled: stored.memoryEnabled ?? defaults.memoryEnabled,
-    personalPreference:
-      stored.personalPreference ?? defaults.personalPreference,
-    dailyTotalBudgetUsd:
-      stored.dailyTotalBudgetUsd ?? defaults.dailyTotalBudgetUsd,
-    reservedBudgetUsd:
-      stored.reservedBudgetUsd ?? defaults.reservedBudgetUsd,
-    wordMemDailyBudgetUsd:
-      stored.wordMemDailyBudgetUsd ?? defaults.wordMemDailyBudgetUsd,
-    economyModeThresholdUsd:
-      stored.economyModeThresholdUsd ?? defaults.economyModeThresholdUsd,
-    perRequestBudgetUsd:
-      stored.perRequestBudgetUsd ?? defaults.perRequestBudgetUsd,
-    enableBackgroundAiTasks:
-      stored.enableBackgroundAiTasks ?? defaults.enableBackgroundAiTasks,
-    backendSync: {
-      ...defaults.backendSync,
-      ...stored.backendSync,
-    },
-    providers: {
-      openai: {
-        ...defaults.providers.openai,
-        ...stored.providers?.openai,
-        label: defaults.providers.openai.label,
-      },
-      deepseek: { ...defaults.providers.deepseek, ...stored.providers?.deepseek },
-      bxi: { ...defaults.providers.bxi, ...stored.providers?.bxi },
-      custom: { ...defaults.providers.custom, ...stored.providers?.custom },
-    },
-  };
+  return normalizeAppSettings(stored);
 }
 
 export async function saveSettings(settings: AppSettings): Promise<void> {

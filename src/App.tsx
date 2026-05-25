@@ -1,6 +1,8 @@
 import {
+  Bot,
   BookOpen,
   Brain,
+  ChartCandlestick,
   ChevronDown,
   ChevronRight,
   Cloud,
@@ -25,7 +27,7 @@ import {
   X,
 } from "lucide-react";
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
-import type { AnchorHTMLAttributes, ReactNode } from "react";
+import type { AnchorHTMLAttributes, CSSProperties, ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import rehypeRaw from "rehype-raw";
@@ -39,7 +41,14 @@ import {
   unwrapAiWrappedBody,
 } from "./cardModel";
 import { explainWithActiveProvider } from "./ai/providers";
-import { createEmptyCard, createId, nowIso } from "./defaults";
+import {
+  DEFAULT_LIBRARY_ID,
+  QUANT_LIBRARY_ID,
+  createEmptyCard,
+  createId,
+  normalizeLibraries,
+  nowIso,
+} from "./defaults";
 import {
   deleteCard as deleteCardFromDb,
   clearPendingDelete,
@@ -59,13 +68,17 @@ import {
   canUseBackendSync,
   deleteCardFromSync,
   fetchSyncSnapshot,
-  fetchSyncStatus,
   mergeRemoteSettings,
   pushCardsToSync,
   pushSettingsToSync,
   pushUsageToSync,
 } from "./data/sync";
-import { buildExport, buildUsageExport, downloadJson, parseImportedCards } from "./importExport";
+import {
+  buildExport,
+  buildUsageExport,
+  downloadJson,
+  parseImportedPayload,
+} from "./importExport";
 import { collectTags, searchCards } from "./search";
 import { findRelatedMemoryCards, memoryHint } from "./memory";
 import { buildKnowledgeViews, findRelatedCards } from "./knowledge";
@@ -87,6 +100,7 @@ import type {
   AiTaskType,
   AppSettings,
   KnowledgeCard,
+  KnowledgeLibrary,
   ProviderConfig,
   ReasoningEffort,
   UsageRecord,
@@ -95,9 +109,16 @@ import type {
 
 type View = "library" | "settings";
 type LibraryMode = "views" | "all";
+type LibraryScopeMode = "active" | "all";
 type EditorMode = "edit" | "preview";
 type MobilePane = "detail" | "library";
-type AiActionKind = "quick" | "polish" | "review_section" | "review_full" | "tag";
+type AiActionKind =
+  | "quick"
+  | "polish"
+  | "repair_format"
+  | "review_section"
+  | "review_full"
+  | "tag";
 type AiRouteDisplay = {
   providerId: AiProviderId;
   providerLabel: string;
@@ -136,6 +157,16 @@ const PREFERRED_TAG_ORDER = [
   "数学基础",
   "优化算法",
   "debug",
+  "量化交易",
+  "期货",
+  "因子",
+  "信号",
+  "回测",
+  "执行",
+  "风险管理",
+  "仓位",
+  "盘口",
+  "CTA",
 ];
 const PROTECTED_DISTINCT_TAGS = new Set([
   "PPO",
@@ -144,6 +175,9 @@ const PROTECTED_DISTINCT_TAGS = new Set([
   "rollout",
   "debug",
   "MuJoCo",
+  "CTA",
+  "IC",
+  "alpha",
 ]);
 
 function hasMobilePreviewParam() {
@@ -195,6 +229,37 @@ function cloneCard(card: KnowledgeCard) {
 
 function sortCardsByUpdatedAt(cards: KnowledgeCard[]) {
   return [...cards].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+}
+
+function findLibraryById(libraries: KnowledgeLibrary[], libraryId: string | undefined) {
+  return (
+    libraries.find((library) => library.id === libraryId) ||
+    libraries.find((library) => library.id === DEFAULT_LIBRARY_ID) ||
+    libraries[0]
+  );
+}
+
+function cardsForLibrary(cards: KnowledgeCard[], libraryId: string | undefined) {
+  const targetLibraryId = libraryId || DEFAULT_LIBRARY_ID;
+  return cards.filter((card) => (card.libraryId || DEFAULT_LIBRARY_ID) === targetLibraryId);
+}
+
+function createEmptyCardForLibrary(settings: AppSettings | null, libraryId?: string) {
+  const targetLibraryId = libraryId || settings?.activeLibraryId || DEFAULT_LIBRARY_ID;
+  const library = settings ? findLibraryById(settings.libraries, targetLibraryId) : undefined;
+  return createEmptyCard(targetLibraryId, library?.defaultSourceContext || "");
+}
+
+function LibraryBranchIcon({ libraryId }: { libraryId: string }) {
+  if (libraryId === DEFAULT_LIBRARY_ID) {
+    return <Bot size={18} />;
+  }
+
+  if (libraryId === QUANT_LIBRARY_ID) {
+    return <ChartCandlestick size={18} />;
+  }
+
+  return <Library size={18} />;
 }
 
 function normalizeTags(value: string) {
@@ -291,57 +356,6 @@ function isFetchLikeError(error: unknown) {
   return error instanceof TypeError && /fetch/i.test(error.message);
 }
 
-function toDisplayMathBlock(indent: string, formula: string) {
-  return `${indent}$$\n${formula.trim()}\n${indent}$$`;
-}
-
-function normalizeMathDelimiters(body: string) {
-  return body
-    .replace(/\\\[\s*([\s\S]+?)\s*\\\]/g, (_match, formula: string) =>
-      `$$\n${formula.trim()}\n$$`
-    )
-    .replace(/\\\(\s*([^\n]+?)\s*\\\)/g, (_match, formula: string) =>
-      `$${formula.trim()}$`
-    );
-}
-
-function normalizeStandaloneMath(body: string) {
-  return normalizeMathDelimiters(body)
-    .split("\n")
-    .map((line) => {
-      const blockMatch = line.match(/^(\s*)\$\$\s*([^$\n]+?)\s*\$\$(\s*)$/);
-      if (blockMatch) {
-        return toDisplayMathBlock(blockMatch[1], blockMatch[2]);
-      }
-
-      const inlineMatch = line.match(/^(\s*)\$\s*([^$\n]+?)\s*\$(\s*)$/);
-      if (inlineMatch) {
-        return toDisplayMathBlock(inlineMatch[1], inlineMatch[2]);
-      }
-
-      const bracketMatch = line.match(/^(\s*)\\\[\s*(.+?)\s*\\\](\s*)$/);
-      if (bracketMatch) {
-        return toDisplayMathBlock(bracketMatch[1], bracketMatch[2]);
-      }
-
-      const parenMatch = line.match(/^(\s*)\\\(\s*(.+?)\s*\\\)(\s*)$/);
-      if (parenMatch) {
-        return toDisplayMathBlock(parenMatch[1], parenMatch[2]);
-      }
-
-      const labeledInlineMatch = line.match(/^(\s*)([^$]{1,28}[:：])\s*\$\s*([^$\n]+?)\s*\$(\s*)$/);
-      if (labeledInlineMatch) {
-        return `${labeledInlineMatch[1]}${labeledInlineMatch[2]}\n\n${toDisplayMathBlock(
-          labeledInlineMatch[1],
-          labeledInlineMatch[3]
-        )}`;
-      }
-
-      return line;
-    })
-    .join("\n");
-}
-
 function plainMarkdownText(value: string) {
   return value
     .replace(/[`*_~#[\]()>]/g, "")
@@ -418,9 +432,7 @@ function buildDraftFromAi(
   result: Awaited<ReturnType<typeof explainWithActiveProvider>>
 ): KnowledgeCard {
   const structuredDraft = result.structuredDraft || structuredDraftFromText(result.rawAnswer);
-  const body = normalizeStandaloneMath(
-    draftBodyFromStructured(structuredDraft, result.rawAnswer)
-  );
+  const body = draftBodyFromStructured(structuredDraft, result.rawAnswer).trim();
   const nextTags = structuredDraft?.tags?.length
     ? Array.from(new Set([...card.tags, ...structuredDraft.tags]))
     : card.tags;
@@ -452,7 +464,7 @@ function MarkdownPreview({
   onSectionFocus?: (sectionId: string) => void;
 }) {
   const normalizedBody = useMemo(
-    () => normalizeStandaloneMath(unwrapAiWrappedBody(body)),
+    () => unwrapAiWrappedBody(body),
     [body]
   );
   const sectionedBody = useMemo(
@@ -624,7 +636,7 @@ function stripLeadingSectionHeading(body: string, title: string) {
 }
 
 function sectionForReview(body: string, activeSectionId: string) {
-  const parsed = splitMarkdownSections(normalizeStandaloneMath(unwrapAiWrappedBody(body)));
+  const parsed = splitMarkdownSections(unwrapAiWrappedBody(body));
   const selected =
     parsed.sections.find((section) => section.id === activeSectionId) ||
     parsed.sections.find((section) => section.defaultOpen) ||
@@ -649,9 +661,9 @@ function replaceMarkdownSection(
   targetSection: MarkdownSection,
   nextSectionBody: string
 ) {
-  const parsed = splitMarkdownSections(normalizeStandaloneMath(unwrapAiWrappedBody(body)));
+  const parsed = splitMarkdownSections(unwrapAiWrappedBody(body));
   const cleanedNextBody = stripLeadingSectionHeading(
-    normalizeStandaloneMath(unwrapAiWrappedBody(nextSectionBody)),
+    unwrapAiWrappedBody(nextSectionBody),
     targetSection.title
   );
   if (targetSection.id === "intro" && !parsed.sections.length) {
@@ -672,6 +684,9 @@ function aiActionLabel(action: AiActionKind) {
   }
   if (action === "polish") {
     return "高质量整理";
+  }
+  if (action === "repair_format") {
+    return "修复格式";
   }
   if (action === "review_section") {
     return "专家审阅当前段落";
@@ -888,12 +903,16 @@ function App() {
   const [draft, setDraft] = useState<KnowledgeCard>(createEmptyCard());
   const [selectedId, setSelectedId] = useState<string>("");
   const [query, setQuery] = useState("");
-  const [activeTag, setActiveTag] = useState("");
+  const [activeTags, setActiveTags] = useState<string[]>([]);
   const [view, setView] = useState<View>("library");
-  const [libraryMode, setLibraryMode] = useState<LibraryMode>("views");
+  const [libraryMode, setLibraryMode] = useState<LibraryMode>(() =>
+    isMobileLayoutPreferred(forceMobilePreview) ? "all" : "views"
+  );
+  const [libraryScopeMode, setLibraryScopeMode] = useState<LibraryScopeMode>("active");
   const [activeKnowledgeViewId, setActiveKnowledgeViewId] = useState("");
   const [editorMode, setEditorMode] = useState<EditorMode>("edit");
   const [mobilePane, setMobilePane] = useState<MobilePane>("detail");
+  const [mobileLibraryFiltersOpen, setMobileLibraryFiltersOpen] = useState(false);
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const [mobileAiOpen, setMobileAiOpen] = useState(false);
   const [expandedProviderIds, setExpandedProviderIds] = useState<AiProviderId[]>([]);
@@ -949,6 +968,18 @@ function App() {
   }, [forceMobilePreview]);
 
   useEffect(() => {
+    if (!mobileLayout || mobilePane !== "library") {
+      return;
+    }
+
+    setLibraryScopeMode("active");
+    setLibraryMode("all");
+    setActiveKnowledgeViewId("");
+    setActiveTags([]);
+    setMobileLibraryFiltersOpen(false);
+  }, [mobileLayout, mobilePane]);
+
+  useEffect(() => {
     document.documentElement.classList.toggle("mobile-preview", forceMobilePreview);
     return () => document.documentElement.classList.remove("mobile-preview");
   }, [forceMobilePreview]);
@@ -976,124 +1007,43 @@ function App() {
   useEffect(() => {
     let cancelled = false;
 
-    async function openLocalAndSync() {
+    async function openLocalOnly() {
       try {
         const [storedCards, storedSettings, storedUsageRecords] = await Promise.all([
           listCards(),
           loadSettings(),
           listUsageRecords(),
         ]);
-        let nextCards = storedCards;
-        let nextSettings = storedSettings;
-        let nextUsageRecords = storedUsageRecords;
-        let nextStatus = "";
-        let nextSyncStatus = "";
-
-        try {
-          const detectedBaseUrl = storedSettings.backendSync.baseUrl || "";
-          const serverSyncStatus = await fetchSyncStatus(detectedBaseUrl);
-          if (serverSyncStatus.trustedAutoSync) {
-            nextSettings = {
-              ...storedSettings,
-              backendSync: {
-                ...storedSettings.backendSync,
-                enabled: true,
-                baseUrl: detectedBaseUrl,
-                trustedAutoSync: true,
-                pendingChanges: false,
-              },
-            };
-          }
-        } catch (_syncStatusError) {
-          // Sync status is best-effort; local-only mode still works.
-        }
-
-        if (canUseBackendSync(nextSettings)) {
-          try {
-            const snapshot = await fetchSyncSnapshot(nextSettings);
-            const syncedAt = nowIso();
-            const backendHasContent = !snapshot.syncMeta.isEmpty;
-
-            if (snapshot.settings) {
-              nextSettings = mergeRemoteSettings(snapshot.settings, nextSettings, {
-                lastSyncedAt: syncedAt,
-                pendingChanges: false,
-                trustedAutoSync: nextSettings.backendSync.trustedAutoSync,
-              });
-            } else {
-              nextSettings = {
-                ...nextSettings,
-                backendSync: {
-                  ...nextSettings.backendSync,
-                  lastSyncedAt: syncedAt,
-                  pendingChanges: false,
-                },
-              };
-            }
-            await saveSettings(nextSettings);
-
-            if (backendHasContent || !storedCards.length) {
-              nextCards = sortCardsByUpdatedAt(snapshot.cards);
-              await replaceCards(nextCards);
-            } else if (nextSettings.backendSync.trustedAutoSync) {
-              await pushCardsToSync(nextSettings, storedCards);
-              await pushSettingsToSync(nextSettings);
-              if (storedUsageRecords.length) {
-                await pushUsageToSync(nextSettings, storedUsageRecords);
-              }
-              nextCards = sortCardsByUpdatedAt(storedCards);
-              nextStatus = `已自动把本机 ${storedCards.length} 张卡片上传到后端。`;
-              nextSyncStatus = "可信自动同步已启用。";
-            } else {
-              nextStatus = "后端词库还是空的。确认首次同步后，可以在设置里上传本机数据到后端。";
-            }
-
-            if (snapshot.usageRecords.length) {
-              await saveUsageRecordsToDb(snapshot.usageRecords);
-              nextUsageRecords = await listUsageRecords();
-            }
-
-            nextSyncStatus =
-              nextStatus || `已从后端同步：${snapshot.cards.length} 张卡片。`;
-          } catch (syncError) {
-            nextSettings = {
-              ...nextSettings,
-              backendSync: {
-                ...nextSettings.backendSync,
-                pendingChanges: true,
-              },
-            };
-            await saveSettings(nextSettings);
-            nextSyncStatus = `后端暂不可用，已打开本地缓存：${
-              syncError instanceof Error ? syncError.message : "同步失败"
-            }`;
-          }
-        }
 
         if (cancelled) {
           return;
         }
 
-        setCards(nextCards);
-        setSettings(nextSettings);
-        setUsageRecords(nextUsageRecords);
-        setSyncStatus(nextSyncStatus);
-        if (nextStatus) {
-          setStatus(nextStatus);
-        }
+        setCards(storedCards);
+        setSettings(storedSettings);
+        setUsageRecords(storedUsageRecords);
+        setSyncStatus(storedSettings.backendSync.pendingChanges ? "本地待同步" : "");
         if (launchParam("pane") === "library") {
           setMobilePane("library");
         }
         if (launchParam("action") === "new") {
           setSelectedId("");
-          setDraft(createEmptyCard());
+          setDraft(createEmptyCardForLibrary(storedSettings));
           setEditorMode("edit");
           setMobilePane("detail");
           setStatus("已准备一张新卡片。");
-        } else if (nextCards[0]) {
-          setSelectedId(nextCards[0].id);
-          setDraft(cloneCard(nextCards[0]));
-          setEditorMode("preview");
+        } else {
+          const firstActiveCard =
+            cardsForLibrary(storedCards, storedSettings.activeLibraryId)[0] || storedCards[0];
+          if (firstActiveCard) {
+            setSelectedId(firstActiveCard.id);
+            setDraft(cloneCard(firstActiveCard));
+            setEditorMode("preview");
+          } else {
+            setSelectedId("");
+            setDraft(createEmptyCardForLibrary(storedSettings));
+            setEditorMode("edit");
+          }
         }
       } catch (loadError) {
         setError(loadError instanceof Error ? loadError.message : "加载本地数据失败。");
@@ -1104,28 +1054,12 @@ function App() {
       }
     }
 
-    openLocalAndSync();
+    openLocalOnly();
 
     return () => {
       cancelled = true;
     };
   }, []);
-
-  useEffect(() => {
-    const cleanedBody = unwrapAiWrappedBody(draft.body);
-    if (cleanedBody && cleanedBody !== draft.body) {
-      setDraft((current) =>
-        current.id === draft.id
-          ? normalizeKnowledgeCard({
-              ...current,
-              body: cleanedBody,
-            })
-          : current
-      );
-      setStatus("已自动清理这张卡片里的 AI JSON 外壳，确认后保存即可。");
-      setError("");
-    }
-  }, [draft.id, draft.body]);
 
   useEffect(() => {
     const cleanedPronunciation = cleanPronunciation(draft.pronunciation);
@@ -1141,7 +1075,25 @@ function App() {
     }
   }, [draft.id, draft.pronunciation]);
 
-  const knowledgeViews = useMemo(() => buildKnowledgeViews(cards), [cards]);
+  const libraries = settings?.libraries || [];
+  const activeLibraryId = settings?.activeLibraryId || DEFAULT_LIBRARY_ID;
+  const activeLibrary = findLibraryById(libraries, activeLibraryId);
+  const activeLibraryIndex = Math.max(
+    0,
+    libraries.findIndex((library) => library.id === activeLibraryId)
+  );
+  const activeLibraryCards = useMemo(
+    () => cardsForLibrary(cards, activeLibraryId),
+    [activeLibraryId, cards]
+  );
+  const scopedCards = useMemo(
+    () => (libraryScopeMode === "all" ? cards : activeLibraryCards),
+    [activeLibraryCards, cards, libraryScopeMode]
+  );
+  const knowledgeViews = useMemo(
+    () => buildKnowledgeViews(scopedCards, activeLibraryId),
+    [activeLibraryId, scopedCards]
+  );
   const activeKnowledgeView = useMemo(() => {
     if (libraryMode !== "views") {
       return undefined;
@@ -1152,20 +1104,23 @@ function App() {
     );
   }, [activeKnowledgeViewId, knowledgeViews, libraryMode]);
   const libraryCards = useMemo(
-    () => (libraryMode === "views" && activeKnowledgeView ? activeKnowledgeView.cards : cards),
-    [activeKnowledgeView, cards, libraryMode]
+    () => (libraryMode === "views" && activeKnowledgeView ? activeKnowledgeView.cards : scopedCards),
+    [activeKnowledgeView, scopedCards, libraryMode]
   );
   const tags = useMemo(() => collectTags(libraryCards), [libraryCards]);
   const filteredCards = useMemo(
-    () => searchCards(libraryCards, query, activeTag),
-    [activeTag, libraryCards, query]
+    () => searchCards(libraryCards, query, activeTags),
+    [activeTags, libraryCards, query]
   );
+  const mobileActiveFilterCount =
+    (libraryScopeMode === "all" ? 1 : 0) +
+    (libraryMode === "views" && activeKnowledgeView ? 1 : 0) +
+    activeTags.length;
   const relatedCards = useMemo(
-    () => findRelatedCards(draft, cards, 5),
+    () => findRelatedCards(draft, cardsForLibrary(cards, draft.libraryId), 5),
     [cards, draft]
   );
   const activeProvider = settings ? settings.providers[settings.activeProvider] : null;
-  const shownProvider = draft.providerId && settings ? settings.providers[draft.providerId] : null;
   const fallbackModelDisplay: AiRouteDisplay = aiBusy
     ? {
         providerId: settings?.activeProvider || "openai",
@@ -1174,9 +1129,9 @@ function App() {
         taskType: undefined,
       }
     : {
-        providerId: draft.providerId || settings?.activeProvider || "openai",
-        providerLabel: shownProvider?.label || activeProvider?.label || "AI",
-        model: draft.model || activeProvider?.defaultModel || "未配置",
+        providerId: settings?.activeProvider || "openai",
+        providerLabel: activeProvider?.label || "AI",
+        model: activeProvider?.defaultModel || "未配置",
         taskType: undefined,
       };
   const modelDisplay = aiRouteDisplay || fallbackModelDisplay;
@@ -1220,6 +1175,22 @@ function App() {
     return nextSettings;
   }
 
+  async function markLocalPendingSync(message: string, baseSettings = settings) {
+    if (!baseSettings?.backendSync.enabled) {
+      setSyncStatus("本地模式");
+      return baseSettings;
+    }
+
+    const nextSettings = await applyBackendSyncPatch(
+      {
+        pendingChanges: true,
+      },
+      baseSettings
+    );
+    setSyncStatus(message);
+    return nextSettings;
+  }
+
   function updateDraft<K extends keyof KnowledgeCard>(key: K, value: KnowledgeCard[K]) {
     setDraft((current) => ({
       ...current,
@@ -1227,7 +1198,7 @@ function App() {
     }));
   }
 
-  function selectCard(card: KnowledgeCard) {
+  function showCard(card: KnowledgeCard) {
     setSelectedId(card.id);
     setDraft(cloneCard(card));
     setEditorMode("preview");
@@ -1241,8 +1212,87 @@ function App() {
     setAiRouteDisplay(null);
   }
 
+  function persistActiveLibrary(nextSettings: AppSettings) {
+    void saveSettings(nextSettings).catch((saveError) => {
+      setSyncStatus(
+        `词库分支已切换，但本地设置保存失败：${
+          saveError instanceof Error ? saveError.message : "保存失败"
+        }`
+      );
+    });
+  }
+
+  function switchActiveLibrary(libraryId: string) {
+    if (!settings) {
+      return;
+    }
+
+    const keepLibraryPane = mobileLayout && mobilePane === "library";
+    const nextLibrary = findLibraryById(settings.libraries, libraryId);
+    const nextLibraryId = nextLibrary?.id || DEFAULT_LIBRARY_ID;
+    const nextSettings = {
+      ...settings,
+      activeLibraryId: nextLibraryId,
+      updatedAt: nowIso(),
+    };
+    setSettings(nextSettings);
+    persistActiveLibrary(nextSettings);
+    setLibraryScopeMode("active");
+    setLibraryMode(mobileLayout ? "all" : "views");
+    setActiveKnowledgeViewId("");
+    setActiveTags([]);
+    setQuery("");
+    setMobileLibraryFiltersOpen(false);
+    const firstCard = cardsForLibrary(cards, nextLibraryId)[0];
+    if (firstCard) {
+      if (keepLibraryPane) {
+        setSelectedId(firstCard.id);
+        setDraft(cloneCard(firstCard));
+        setEditorMode("preview");
+        setMobilePane("library");
+        setMobileMoreOpen(false);
+        setMobileAiOpen(false);
+        setActiveSectionId("");
+        setStatus("");
+        setError("");
+        setMemoryStatus("");
+        setAiRouteDisplay(null);
+      } else {
+        showCard(firstCard);
+      }
+    } else {
+      setSelectedId("");
+      setDraft(createEmptyCardForLibrary(nextSettings, nextLibraryId));
+      setEditorMode("edit");
+      setMobilePane(keepLibraryPane ? "library" : "detail");
+      setStatus(`${nextLibrary?.name || "当前词库"} 还没有卡片。`);
+      setError("");
+      setMemoryStatus("");
+      setAiRouteDisplay(null);
+    }
+  }
+
+  function selectCard(card: KnowledgeCard) {
+    if (settings && (card.libraryId || DEFAULT_LIBRARY_ID) !== settings.activeLibraryId) {
+      const nextLibraryId = card.libraryId || DEFAULT_LIBRARY_ID;
+      const nextSettings = {
+        ...settings,
+        activeLibraryId: nextLibraryId,
+        updatedAt: nowIso(),
+      };
+      setSettings(nextSettings);
+      persistActiveLibrary(nextSettings);
+      setLibraryScopeMode("active");
+      setLibraryMode(mobileLayout ? "all" : "views");
+      setActiveKnowledgeViewId("");
+      setActiveTags([]);
+      setMobileLibraryFiltersOpen(false);
+    }
+    showCard(card);
+  }
+
   function startNewCard() {
-    const next = createEmptyCard();
+    const next = createEmptyCardForLibrary(settings);
     setSelectedId("");
     setDraft(next);
     setEditorMode("edit");
@@ -1259,6 +1309,11 @@ function App() {
 
   function showMobileLibrary() {
     setMobilePane("library");
+    setLibraryScopeMode("active");
+    setLibraryMode("all");
+    setActiveKnowledgeViewId("");
+    setActiveTags([]);
+    setMobileLibraryFiltersOpen(false);
     setMobileMoreOpen(false);
     setMobileAiOpen(false);
   }
@@ -1271,13 +1326,20 @@ function App() {
 
   function showAllLibraryCards() {
     setLibraryMode("all");
-    setActiveTag("");
+    setActiveKnowledgeViewId("");
   }
 
   function selectKnowledgeView(viewId: string) {
     setLibraryMode("views");
     setActiveKnowledgeViewId(viewId);
-    setActiveTag("");
+  }
+
+  function toggleActiveTag(tag: string) {
+    setActiveTags((current) =>
+      current.includes(tag)
+        ? current.filter((selectedTag) => selectedTag !== tag)
+        : [...current, tag]
+    );
   }
 
   function toggleEditorMode() {
@@ -1351,6 +1413,7 @@ function App() {
     const stamp = nowIso();
     const nextCard = normalizeKnowledgeCard({
       ...draft,
+      libraryId: draft.libraryId || activeLibraryId,
       term,
       body,
       pronunciation: cleanPronunciation(draft.pronunciation),
@@ -1367,26 +1430,21 @@ function App() {
     );
     setDraft(cloneCard(nextCard));
     setSelectedId(nextCard.id);
+    let settingsForPending = settings;
+    if (settings && nextCard.libraryId !== settings.activeLibraryId) {
+      const nextSettings = {
+        ...settings,
+        activeLibraryId: nextCard.libraryId,
+        updatedAt: nowIso(),
+      };
+      setSettings(nextSettings);
+      persistActiveLibrary(nextSettings);
+      settingsForPending = nextSettings;
+    }
     setEditorMode("preview");
     setStatus("卡片已保存。");
     setError("");
-
-    const syncSettings = settings;
-    if (canUseBackendSync(syncSettings)) {
-      try {
-        await pushCardsToSync(syncSettings, [nextCard]);
-        await applyBackendSyncPatch({
-          lastSyncedAt: nowIso(),
-          pendingChanges: false,
-        });
-        setStatus("卡片已保存并同步到后端。");
-        setSyncStatus("后端同步正常。");
-      } catch (syncError) {
-        await applyBackendSyncPatch({ pendingChanges: true });
-        setStatus("卡片已保存到本地，后端暂不可用，稍后可手动同步。");
-        setSyncStatus(`本地待同步：${syncErrorMessage(syncError)}`);
-      }
-    }
+    await markLocalPendingSync("本地待同步：卡片已保存，等待手动同步。", settingsForPending);
   }
 
   async function handleDeleteCard() {
@@ -1404,10 +1462,11 @@ function App() {
     const deletedAt = nowIso();
     await deleteCardFromDb(draft.id);
     const remaining = cards.filter((card) => card.id !== draft.id);
+    const remainingInLibrary = cardsForLibrary(remaining, draft.libraryId || activeLibraryId);
     setCards(remaining);
-    if (remaining[0]) {
-      setSelectedId(remaining[0].id);
-      setDraft(cloneCard(remaining[0]));
+    if (remainingInLibrary[0]) {
+      setSelectedId(remainingInLibrary[0].id);
+      setDraft(cloneCard(remainingInLibrary[0]));
       setEditorMode("preview");
     } else {
       startNewCard();
@@ -1415,52 +1474,30 @@ function App() {
     setStatus("卡片已删除。");
     setError("");
 
-    const syncSettings = settings;
-    if (canUseBackendSync(syncSettings)) {
-      try {
-        await deleteCardFromSync(syncSettings, deletedId, deletedAt);
-        await clearPendingDelete(deletedId);
-        await applyBackendSyncPatch({
-          lastSyncedAt: nowIso(),
-          pendingChanges: false,
-        });
-        setStatus("卡片已删除并同步到后端。");
-        setSyncStatus("后端同步正常。");
-      } catch (syncError) {
-        await savePendingDelete({ id: deletedId, deletedAt });
-        await applyBackendSyncPatch({ pendingChanges: true });
-        setStatus("卡片已从本地删除，后端暂不可用，稍后可手动同步。");
-        setSyncStatus(`本地待同步：${syncErrorMessage(syncError)}`);
-      }
+    if (settings?.backendSync.enabled) {
+      await savePendingDelete({ id: deletedId, deletedAt });
     }
+    await markLocalPendingSync("本地待同步：删除记录已保存，等待手动同步。");
   }
 
   async function persistUsageRecord(record: UsageRecord) {
     await saveUsageRecord(record);
     const nextRecords = await listUsageRecords();
     setUsageRecords(nextRecords);
-
-    const syncSettings = settings;
-    if (canUseBackendSync(syncSettings)) {
-      try {
-        await pushUsageToSync(syncSettings, [record]);
-        await applyBackendSyncPatch({
-          lastSyncedAt: nowIso(),
-          pendingChanges: false,
-        });
-      } catch (syncError) {
-        await applyBackendSyncPatch({ pendingChanges: true });
-        setSyncStatus(`用量记录已保存在本地，后端待同步：${syncErrorMessage(syncError)}`);
-      }
-    }
+    await markLocalPendingSync("本地待同步：用量记录已保存到本地。");
   }
 
   function buildAiRequestForCard(
     card: KnowledgeCard,
     taskType: AiTaskType,
-    relatedCards = settings?.memoryEnabled ? findRelatedMemoryCards(card, cards, 3) : [],
+    relatedCards = settings?.memoryEnabled
+      ? findRelatedMemoryCards(card, cardsForLibrary(cards, card.libraryId), 3)
+      : [],
     pastedRawAnswer = card.body
   ): AiExplainRequest {
+    const cardLibrary = settings
+      ? findLibraryById(settings.libraries, card.libraryId || settings.activeLibraryId)
+      : undefined;
     return {
       term: card.term,
       sourceContext: card.sourceContext,
@@ -1468,7 +1505,8 @@ function App() {
       taskType,
       memoryContext: settings?.memoryEnabled
         ? {
-            personalPreference: settings.personalPreference,
+            personalPreference:
+              cardLibrary?.personalPreference || settings.personalPreference,
             relatedCards,
           }
         : undefined,
@@ -1496,7 +1534,7 @@ function App() {
     }
 
     const relatedCards = settings.memoryEnabled
-      ? findRelatedMemoryCards(card, cards, 3)
+      ? findRelatedMemoryCards(card, cardsForLibrary(cards, card.libraryId), 3)
       : [];
     const request = buildAiRequestForCard(
       card,
@@ -1629,7 +1667,7 @@ function App() {
     aiAbortRef.current = controller;
 
     const relatedCards = settings?.memoryEnabled
-      ? findRelatedMemoryCards(draft, cards, 3)
+      ? findRelatedMemoryCards(draft, cardsForLibrary(cards, draft.libraryId), 3)
       : [];
     const nextMemoryStatus = memoryHint(relatedCards, Boolean(settings?.memoryEnabled));
     setMemoryStatus(nextMemoryStatus);
@@ -1715,6 +1753,14 @@ function App() {
       return;
     }
 
+    if (action === "repair_format") {
+      if (!draft.body.trim()) {
+        setError("请先有正文内容，再修复格式。");
+        return;
+      }
+      // Continue through the normal AI task path below.
+    }
+
     if (action === "review_section" && !draft.body.trim()) {
       setError("请先有正文内容，再审阅当前段落。");
       return;
@@ -1757,13 +1803,14 @@ function App() {
         return;
       }
 
-      const taskType: AiTaskType = action === "tag" ? "tag" : "explain";
+      const taskType: AiTaskType =
+        action === "tag" ? "tag" : action === "repair_format" ? "format" : "explain";
       const result = await runAiTaskForCard(draft, taskType, {
         signal: controller.signal,
-        forceEconomy: action === "quick" || action === "tag",
+        forceEconomy: action === "quick" || action === "tag" || action === "repair_format",
         statusLabel: label,
         modelPreference:
-          action === "quick" || action === "tag"
+          action === "quick" || action === "tag" || action === "repair_format"
             ? "cheap"
             : action === "polish"
               ? "balanced"
@@ -1814,7 +1861,7 @@ function App() {
       return;
     }
 
-    const candidates = cards
+    const candidates = activeLibraryCards
       .filter((card) => card.body.trim())
       .slice(0, 3);
 
@@ -1847,20 +1894,7 @@ function App() {
         setDraft(cloneCard(selected));
       }
       setStatus(`后台整理完成：${updatedCards.length} 张卡片已更新。`);
-
-      if (canUseBackendSync(settings)) {
-        try {
-          await pushCardsToSync(settings, updatedCards);
-          await applyBackendSyncPatch({
-            lastSyncedAt: nowIso(),
-            pendingChanges: false,
-          });
-          setSyncStatus("后台整理结果已同步到后端。");
-        } catch (syncError) {
-          await applyBackendSyncPatch({ pendingChanges: true });
-          setSyncStatus(`后台整理结果已保存在本地，后端待同步：${syncErrorMessage(syncError)}`);
-        }
-      }
+      await markLocalPendingSync("本地待同步：后台整理结果已保存。");
     } catch (taskError) {
       setError(taskError instanceof Error ? taskError.message : "后台整理失败。");
       setStatus("");
@@ -1971,7 +2005,7 @@ function App() {
       return;
     }
 
-    const inventory = buildTagMergeInventory(cards);
+    const inventory = buildTagMergeInventory(activeLibraryCards);
     if (!inventory.length) {
       setStatus("还没有可整理的标签。");
       setError("");
@@ -1991,7 +2025,7 @@ function App() {
 
     try {
       const aliasMap = mode === "ai" ? await runAiTagMerge(inventory, controller.signal) : {};
-      const updatedCards = applyTagAliasesToCards(cards, aliasMap);
+      const updatedCards = applyTagAliasesToCards(activeLibraryCards, aliasMap);
 
       if (!updatedCards.length) {
         setStatus(
@@ -2009,20 +2043,7 @@ function App() {
       if (selected) {
         setDraft(cloneCard(selected));
       }
-
-      if (canUseBackendSync(settings)) {
-        try {
-          await pushCardsToSync(settings, updatedCards);
-          await applyBackendSyncPatch({
-            lastSyncedAt: nowIso(),
-            pendingChanges: false,
-          });
-          setSyncStatus("标签整理结果已同步到后端。");
-        } catch (syncError) {
-          await applyBackendSyncPatch({ pendingChanges: true });
-          setSyncStatus(`标签整理结果已保存在本地，后端待同步：${syncErrorMessage(syncError)}`);
-        }
-      }
+      await markLocalPendingSync("本地待同步：标签整理结果已保存。");
 
       const aliasCount = Object.keys(aliasMap).length;
       setStatus(
@@ -2068,34 +2089,7 @@ function App() {
     setSettings(nextSettings);
     setStatus("设置已保存。");
     setError("");
-
-    if (canUseBackendSync(nextSettings)) {
-      try {
-        const result = await pushSettingsToSync(nextSettings);
-        const syncedAt = nowIso();
-        const remoteSettings = result.settings
-          ? mergeRemoteSettings(result.settings, nextSettings, {
-              lastSyncedAt: syncedAt,
-              pendingChanges: false,
-            })
-          : {
-              ...nextSettings,
-              backendSync: {
-                ...nextSettings.backendSync,
-                lastSyncedAt: syncedAt,
-                pendingChanges: false,
-              },
-            };
-        await saveSettings(remoteSettings);
-        setSettings(remoteSettings);
-        setStatus("设置已保存并同步到后端。API Key 已由后端加密保存。");
-        setSyncStatus("后端同步正常。");
-      } catch (syncError) {
-        await applyBackendSyncPatch({ pendingChanges: true }, nextSettings);
-        setStatus("设置已保存到本地，后端暂不可用，稍后可手动同步。");
-        setSyncStatus(`本地待同步：${syncErrorMessage(syncError)}`);
-      }
-    }
+    await markLocalPendingSync("本地待同步：设置已保存，等待手动同步。", nextSettings);
   }
 
   async function handlePullFromSync() {
@@ -2136,13 +2130,22 @@ function App() {
         const remoteCards = sortCardsByUpdatedAt(snapshot.cards);
         await replaceCards(remoteCards);
         setCards(remoteCards);
-        if (remoteCards[0]) {
-          selectCard(remoteCards[0]);
+        const firstActiveCard =
+          cardsForLibrary(remoteCards, nextSettings.activeLibraryId)[0] || remoteCards[0];
+        if (firstActiveCard) {
+          showCard(firstActiveCard);
         } else {
           startNewCard();
         }
       } else {
-        setStatus("后端词库为空；如果这是第一次同步，请点击“上传本机数据到后端”。");
+        nextSettings = {
+          ...nextSettings,
+          backendSync: {
+            ...nextSettings.backendSync,
+            pendingChanges: true,
+          },
+        };
+        setStatus("后端词库为空；如果这是第一次同步，请点击“手动同步”上传本机数据。");
       }
 
       if (snapshot.usageRecords.length) {
@@ -2152,12 +2155,16 @@ function App() {
 
       await saveSettings(nextSettings);
       setSettings(nextSettings);
-      setSyncStatus(`已刷新后端数据：${snapshot.cards.length} 张卡片。`);
+      setSyncStatus(
+        backendHasContent || !cards.length
+          ? `已刷新后端数据：${snapshot.cards.length} 张卡片。`
+          : "本地待同步：后端为空，本机数据尚未上传。"
+      );
       setError("");
     } catch (syncError) {
-      await applyBackendSyncPatch({ pendingChanges: true });
-      setSyncStatus(`拉取失败：${syncErrorMessage(syncError)}`);
-      setError(syncErrorMessage(syncError));
+      const message = syncErrorMessage(syncError);
+      setSyncStatus(`同步失败，本地数据不受影响：${message}`);
+      setError(`同步失败，本地数据不受影响：${message}`);
     }
   }
 
@@ -2212,8 +2219,9 @@ function App() {
       setSyncStatus("后端同步正常。");
     } catch (syncError) {
       await applyBackendSyncPatch({ pendingChanges: true });
-      setSyncStatus(`上传失败：${syncErrorMessage(syncError)}`);
-      setError(syncErrorMessage(syncError));
+      const message = syncErrorMessage(syncError);
+      setSyncStatus(`同步失败，本地数据不受影响：${message}`);
+      setError(`同步失败，本地数据不受影响：${message}`);
     }
   }
 
@@ -2236,6 +2244,27 @@ function App() {
     });
   }
 
+  function updateLibrary(libraryId: string, changes: Partial<KnowledgeLibrary>) {
+    setSettings((current) => {
+      if (!current) {
+        return current;
+      }
+
+      return {
+        ...current,
+        updatedAt: nowIso(),
+        libraries: current.libraries.map((library) =>
+          library.id === libraryId
+            ? {
+                ...library,
+                ...changes,
+              }
+            : library
+        ),
+      };
+    });
+  }
+
   async function handleImport(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) {
@@ -2244,32 +2273,38 @@ function App() {
 
     try {
       const text = await file.text();
-      const importedCards = parseImportedCards(text);
+      const importedPayload = parseImportedPayload(text, activeLibraryId);
+      const importedCards = importedPayload.cards;
+      let settingsForPending = settings;
+      if (settings && importedPayload.libraries.length) {
+        const nextSettings = {
+          ...settings,
+          libraries: normalizeLibraries(
+            [...settings.libraries, ...importedPayload.libraries],
+            settings.personalPreference
+          ),
+          updatedAt: nowIso(),
+        };
+        await saveSettings(nextSettings);
+        setSettings(nextSettings);
+        settingsForPending = nextSettings;
+      }
       await saveCards(importedCards);
       const nextCards = await listCards();
       setCards(nextCards);
-      if (nextCards[0]) {
+      const firstImported =
+        importedCards[0] && nextCards.find((card) => card.id === importedCards[0].id);
+      if (firstImported) {
+        selectCard(firstImported);
+      } else if (nextCards[0]) {
         selectCard(nextCards[0]);
       }
       setStatus(`已导入 ${importedCards.length} 张卡片。`);
       setError("");
-
-      const syncSettings = settings;
-      if (canUseBackendSync(syncSettings)) {
-        try {
-          await pushCardsToSync(syncSettings, importedCards);
-          await applyBackendSyncPatch({
-            lastSyncedAt: nowIso(),
-            pendingChanges: false,
-          });
-          setStatus(`已导入并同步 ${importedCards.length} 张卡片。`);
-          setSyncStatus("后端同步正常。");
-        } catch (syncError) {
-          await applyBackendSyncPatch({ pendingChanges: true });
-          setStatus(`已导入 ${importedCards.length} 张卡片到本地，后端暂不可用。`);
-          setSyncStatus(`本地待同步：${syncErrorMessage(syncError)}`);
-        }
-      }
+      await markLocalPendingSync(
+        `本地待同步：已导入 ${importedCards.length} 张卡片。`,
+        settingsForPending
+      );
     } catch (importError) {
       setError(importError instanceof Error ? importError.message : "导入失败。");
     } finally {
@@ -2278,7 +2313,10 @@ function App() {
   }
 
   function handleExport() {
-    downloadJson(`wordmem-${new Date().toISOString().slice(0, 10)}.json`, buildExport(cards));
+    downloadJson(
+      `wordmem-${new Date().toISOString().slice(0, 10)}.json`,
+      buildExport(cards, settings?.libraries)
+    );
     setStatus("已导出 JSON 备份，不包含 API Key。");
     setError("");
   }
@@ -2316,6 +2354,37 @@ function App() {
             <strong>WordMem</strong>
             <span>工作术语知识卡片</span>
           </div>
+        </div>
+
+        <div className="library-switcher" role="group" aria-label="词库分支">
+          <span className="library-switcher-label">
+            <Library size={14} />
+            <span>词库分支</span>
+          </span>
+          <span
+            className="library-icon-options"
+            style={
+              {
+                "--library-count": Math.max(libraries.length, 1),
+                "--library-active-index": activeLibraryIndex,
+                gridTemplateColumns: `repeat(${Math.max(libraries.length, 1)}, minmax(0, 1fr))`,
+              } as CSSProperties
+            }
+          >
+            {libraries.map((library) => (
+              <button
+                key={library.id}
+                className={library.id === activeLibraryId ? "active" : ""}
+                onClick={() => switchActiveLibrary(library.id)}
+                title={library.name}
+                aria-label={`切换到${library.name}`}
+                aria-pressed={library.id === activeLibraryId}
+              >
+                <LibraryBranchIcon libraryId={library.id} />
+                <span className="sr-only">{library.name}</span>
+              </button>
+            ))}
+          </span>
         </div>
 
         <nav className="view-tabs" aria-label="主视图">
@@ -2378,7 +2447,7 @@ function App() {
           <aside className="sidebar" aria-label="卡片列表">
             <div className="mobile-library-head">
               <div>
-                <strong>词库</strong>
+                <strong>{libraryScopeMode === "all" ? "全部词库" : activeLibrary?.name || "词库"}</strong>
                 <span>
                   {filteredCards.length} / {libraryCards.length} 张卡片
                 </span>
@@ -2387,6 +2456,20 @@ function App() {
                 <BookOpen size={17} />
                 <span>详情</span>
               </button>
+            </div>
+
+            <div className="mobile-library-summary">
+              <div>
+                <span>{libraryScopeMode === "all" ? "全部词库" : "当前词库"}</span>
+                <strong>{libraryScopeMode === "all" ? "全部词库" : activeLibrary?.name || "词库"}</strong>
+              </div>
+              <small>
+                {filteredCards.length} / {libraryCards.length} 张卡片
+                {libraryMode === "views" && activeKnowledgeView
+                  ? ` · ${activeKnowledgeView.title}`
+                  : ""}
+                {activeTags.length ? ` · ${activeTags.join(" / ")}` : ""}
+              </small>
             </div>
 
             <div className="toolbar">
@@ -2418,12 +2501,130 @@ function App() {
               />
             </label>
 
+            <button
+              className={`mobile-library-filter-toggle ${mobileLibraryFiltersOpen ? "open" : ""}`}
+              onClick={() => setMobileLibraryFiltersOpen((current) => !current)}
+              aria-expanded={mobileLibraryFiltersOpen}
+            >
+              <Tags size={17} />
+              <span>筛选 / 主题</span>
+              {mobileActiveFilterCount ? <small>{mobileActiveFilterCount}</small> : null}
+              <ChevronDown size={17} />
+            </button>
+
+            <div
+              className={`mobile-library-filter-panel ${
+                mobileLibraryFiltersOpen ? "open" : ""
+              }`}
+            >
+              <div className="mobile-filter-row" aria-label="手机词库筛选范围">
+                <div
+                  className={`mobile-segment-control ${
+                    libraryScopeMode === "all" ? "is-right" : "is-left"
+                  }`}
+                  aria-label="手机词库范围"
+                >
+                  <button
+                    className={libraryScopeMode === "active" ? "active" : ""}
+                    onClick={() => {
+                      setLibraryScopeMode("active");
+                      setActiveTags([]);
+                      setActiveKnowledgeViewId("");
+                      setLibraryMode("all");
+                    }}
+                  >
+                    当前
+                  </button>
+                  <button
+                    className={libraryScopeMode === "all" ? "active" : ""}
+                    onClick={() => {
+                      setLibraryScopeMode("all");
+                      setLibraryMode("all");
+                      setActiveTags([]);
+                      setActiveKnowledgeViewId("");
+                    }}
+                  >
+                    全部
+                  </button>
+                </div>
+              </div>
+
+              <div className="mobile-filter-section">
+                <div className="mobile-filter-section-title">主题</div>
+                <div className="mobile-topic-chips" aria-label="手机知识主题">
+                  <button
+                    className={libraryMode === "all" ? "active" : ""}
+                    onClick={showAllLibraryCards}
+                  >
+                    全部主题
+                  </button>
+                  {knowledgeViews.map((knowledgeView) => (
+                    <button
+                      key={knowledgeView.id}
+                      className={
+                        libraryMode === "views" && activeKnowledgeView?.id === knowledgeView.id
+                          ? "active"
+                          : ""
+                      }
+                      onClick={() => {
+                        selectKnowledgeView(knowledgeView.id);
+                      }}
+                    >
+                      {knowledgeView.title}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="mobile-filter-section">
+                <div className="mobile-filter-section-title">标签</div>
+                <div className="tag-filter" aria-label="手机标签筛选">
+                  <button className={!activeTags.length ? "active" : ""} onClick={() => setActiveTags([])}>
+                    全部标签
+                  </button>
+                  {tags.map((tag) => (
+                    <button
+                      key={tag}
+                      className={activeTags.includes(tag) ? "active" : ""}
+                      onClick={() => toggleActiveTag(tag)}
+                    >
+                      {tag}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="library-scope-tabs" aria-label="词库范围">
+              <button
+                className={libraryScopeMode === "active" ? "active" : ""}
+                onClick={() => {
+                  setLibraryScopeMode("active");
+                  setActiveTags([]);
+                  setActiveKnowledgeViewId("");
+                }}
+              >
+                当前词库
+              </button>
+              <button
+                className={libraryScopeMode === "all" ? "active" : ""}
+                onClick={() => {
+                  setLibraryScopeMode("all");
+                  setLibraryMode("all");
+                  setActiveTags([]);
+                  setActiveKnowledgeViewId("");
+                }}
+              >
+                全部词库
+              </button>
+            </div>
+
             <div className="library-mode-tabs" aria-label="词库浏览模式">
               <button
                 className={libraryMode === "views" ? "active" : ""}
                 onClick={() => {
                   setLibraryMode("views");
-                  setActiveTag("");
+                  setActiveTags([]);
                 }}
                 disabled={!knowledgeViews.length}
               >
@@ -2480,14 +2681,14 @@ function App() {
             )}
 
             <div className="tag-filter" aria-label="标签筛选">
-              <button className={!activeTag ? "active" : ""} onClick={() => setActiveTag("")}>
+              <button className={!activeTags.length ? "active" : ""} onClick={() => setActiveTags([])}>
                 全部
               </button>
               {tags.map((tag) => (
                 <button
                   key={tag}
-                  className={activeTag === tag ? "active" : ""}
-                  onClick={() => setActiveTag(tag)}
+                  className={activeTags.includes(tag) ? "active" : ""}
+                  onClick={() => toggleActiveTag(tag)}
                 >
                   {tag}
                 </button>
@@ -2498,6 +2699,9 @@ function App() {
               <Tags size={16} />
               <span>
                 {filteredCards.length} / {libraryCards.length} 张卡片
+                {libraryScopeMode === "active" && activeLibrary
+                  ? ` · ${activeLibrary.name}`
+                  : " · 全部词库"}
                 {libraryMode === "views" && activeKnowledgeView
                   ? ` · ${activeKnowledgeView.title}`
                   : ""}
@@ -2514,7 +2718,12 @@ function App() {
                   >
                     <strong>{card.term}</strong>
                     <span>{getCardSummary(card) || "没有正文内容"}</span>
-                    <small>{formatDate(card.updatedAt)}</small>
+                    <small>
+                      {libraryScopeMode === "all"
+                        ? `${findLibraryById(libraries, card.libraryId)?.name || "未分支"} · `
+                        : ""}
+                      {formatDate(card.updatedAt)}
+                    </small>
                   </button>
                 ))
               ) : (
@@ -2590,16 +2799,34 @@ function App() {
                 <summary>
                   <span>卡片信息</span>
                   <small>
-                    {draft.tags.length ? draft.tags.slice(0, 3).join("，") : "标签 / 工作上下文"}
+                    {findLibraryById(libraries, draft.libraryId)?.name || activeLibrary?.name || "词库"}
+                    {draft.tags.length ? ` · ${draft.tags.slice(0, 2).join("，")}` : " · 标签 / 工作上下文"}
                   </small>
                 </summary>
                 <div className="meta-row">
+                  <label>
+                    <span>所属词库</span>
+                    <select
+                      value={draft.libraryId || activeLibraryId}
+                      onChange={(event) => updateDraft("libraryId", event.target.value)}
+                    >
+                      {libraries.map((library) => (
+                        <option key={library.id} value={library.id}>
+                          {library.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
                   <label>
                     <span>标签</span>
                     <input
                       value={draft.tags.join(", ")}
                       onChange={(event) => updateDraft("tags", normalizeTags(event.target.value))}
-                      placeholder="RL, PPO, robotics, retargeting, MuJoCo"
+                      placeholder={
+                        activeLibraryId === DEFAULT_LIBRARY_ID
+                          ? "RL, PPO, robotics, retargeting, MuJoCo"
+                          : "量化交易, 期货, 因子, 回测, 风控"
+                      }
                     />
                   </label>
                   <label>
@@ -2607,7 +2834,11 @@ function App() {
                     <input
                       value={draft.sourceContext}
                       onChange={(event) => updateDraft("sourceContext", event.target.value)}
-                      placeholder="例如：PPO 训练日志、MuJoCo replay、GMR retargeting、policy rollout"
+                      placeholder={
+                        activeLibraryId === DEFAULT_LIBRARY_ID
+                          ? "例如：PPO 训练日志、MuJoCo replay、GMR retargeting、policy rollout"
+                          : "例如：期货回测、因子研究、CTA 策略、盘口执行、风控日志"
+                      }
                     />
                   </label>
                 </div>
@@ -2641,6 +2872,10 @@ function App() {
                   <Brain size={18} />
                   <span>专家审阅</span>
                 </button>
+                <button onClick={() => handleAiAction("repair_format")} disabled={aiBusy || !draft.body.trim()}>
+                  <RefreshCw size={18} />
+                  <span>修复格式</span>
+                </button>
                 {aiBusy && (
                   <button onClick={cancelAiRequest}>
                     <X size={18} />
@@ -2669,7 +2904,11 @@ function App() {
                 className="body-editor"
                 value={draft.body}
                 onChange={(event) => updateDraft("body", event.target.value)}
-                placeholder="直接粘贴 GPT 回答，或写下这个术语在训练、评测、rollout、机器人运动控制、motion retargeting 里的含义。AI 生成后也会直接写在这里。"
+                placeholder={
+                  activeLibraryId === DEFAULT_LIBRARY_ID
+                    ? "直接粘贴 GPT 回答，或写下这个术语在训练、评测、rollout、机器人运动控制、motion retargeting 里的含义。AI 生成后也会直接写在这里。"
+                    : "直接粘贴 GPT 回答，或写下这个术语在量化/期货入门、因子、回测、风控、盘口里的含义。AI 会按新手补知识的方式整理。"
+                }
               />
             ) : (
               <MarkdownPreview
@@ -2735,6 +2974,11 @@ function App() {
                   <Pencil size={18} />
                   <span>高质量整理</span>
                   <small>把正文整理成 Markdown</small>
+                </button>
+                <button onClick={() => handleAiAction("repair_format")} disabled={!draft.body.trim()}>
+                  <RefreshCw size={18} />
+                  <span>修复格式</span>
+                  <small>清理 HTML、公式和标题</small>
                 </button>
                 <button onClick={() => handleAiAction("review_section")} disabled={!draft.body.trim()}>
                   <Brain size={18} />
@@ -2831,14 +3075,14 @@ function App() {
             </div>
 
             <div className="security-note">
-              未启用后端同步时，API Key 会保存在当前浏览器本地。启用同步并保存设置后，Key 会加密写入后端 SQLite，前端只显示“已保存”。
+              未启用后端同步时，API Key 会保存在当前浏览器本地。启用同步并手动同步后，Key 会加密写入后端 SQLite，前端只显示“已保存”。
             </div>
 
             <section className="sync-settings">
               <div className="sync-settings-head">
                 <div>
                   <strong>后端同步</strong>
-                  <span>电脑和手机共用同一个后端；通过 Tailscale 访问时也需要同步 token。</span>
+                  <span>平时手机使用本地数据；只有手动同步时需要 Tailscale 连接后端。</span>
                 </div>
                 <label className="inline-toggle">
                   <input
@@ -2901,8 +3145,8 @@ function App() {
                     {settings.backendSync.enabled
                       ? settings.backendSync.pendingChanges
                         ? "本地待同步"
-                        : "同步已启用"
-                      : "未启用"}
+                        : "手动同步已配置"
+                      : "本地模式"}
                   </span>
                 </div>
                 <span className="sync-meta">
@@ -2921,7 +3165,7 @@ function App() {
                 </button>
                 <button onClick={handleUploadLocalToSync}>
                   <FileUp size={18} />
-                  <span>上传本机数据到后端</span>
+                  <span>手动同步</span>
                 </button>
               </div>
             </section>
@@ -3127,16 +3371,16 @@ function App() {
                   </span>
                 </div>
                 <div className="classification-state">
-                  {buildTagMergeInventory(cards).length} 个标签
+                  {buildTagMergeInventory(activeLibraryCards).length} 个标签
                 </div>
               </div>
 
               <div className="classification-actions">
-                <button onClick={() => handleAutoClassifyCards("todo")} disabled={aiBusy || !cards.length}>
+                <button onClick={() => handleAutoClassifyCards("todo")} disabled={aiBusy || !activeLibraryCards.length}>
                   {aiBusy ? <Loader2 className="spin" size={18} /> : <Tags size={18} />}
                   <span>本地规则整理标签</span>
                 </button>
-                <button onClick={() => handleAutoClassifyCards("all")} disabled={aiBusy || !cards.length}>
+                <button onClick={() => handleAutoClassifyCards("all")} disabled={aiBusy || !activeLibraryCards.length}>
                   <Sparkles size={18} />
                   <span>AI 合并相似标签</span>
                 </button>
@@ -3153,7 +3397,9 @@ function App() {
               <div className="memory-settings-head">
                 <div>
                   <strong>个人记忆</strong>
-                  <span>AI 解释时自动参考你的旧卡片和表达偏好。</span>
+                  <span>
+                    当前词库：{activeLibrary?.name || "词库"}。AI 解释时只参考当前词库的旧卡片和表达偏好；Provider 和模型选择全局共享。
+                  </span>
                 </div>
                 <label className="inline-toggle">
                   <input
@@ -3171,12 +3417,11 @@ function App() {
               </div>
 
               <label className="field">
-                <span>个人偏好</span>
+                <span>当前词库偏好</span>
                 <textarea
-                  value={settings.personalPreference}
+                  value={activeLibrary?.personalPreference || settings.personalPreference}
                   onChange={(event) =>
-                    setSettings({
-                      ...settings,
+                    updateLibrary(activeLibraryId, {
                       personalPreference: event.target.value,
                     })
                   }
@@ -3187,7 +3432,7 @@ function App() {
             </section>
 
             <label className="field">
-              <span>当前使用的 Provider</span>
+              <span>当前使用的 Provider（所有词库共享）</span>
               <select
                 value={settings.activeProvider}
                 onChange={(event) =>

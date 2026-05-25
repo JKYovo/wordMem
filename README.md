@@ -2,7 +2,7 @@
 
 工作术语知识卡片 PWA。适合记录工作中遇到的英文单词、专业术语、缩写和概念，并把 AI 解释整理成长期可读、可搜索的 Markdown 笔记。
 
-WordMem 当前默认面向深度学习、机器学习、强化学习、机器人运动控制、仿真评测、GMR / motion retargeting、policy rollout 和 debug 等工作语境。
+WordMem 默认内置两个词库分支：`深度学习/机器人` 和 `量化/期货`。前者面向深度学习、强化学习、机器人运动控制、GMR / motion retargeting、rollout 和 debug；后者默认按新手补知识模式组织量化交易、期货合约、因子、回测、风险管理、盘口、套利和 CTA。
 
 ## 亮点
 
@@ -10,6 +10,7 @@ WordMem 当前默认面向深度学习、机器学习、强化学习、机器人
 - **Markdown 笔记**：正文支持 Markdown、GFM 表格、代码块、HTML 和 LaTeX 公式预览。
 - **AI 整理**：可把术语或粘贴的 GPT / DeepSeek 回答整理成结构化工作笔记。
 - **个人记忆**：AI 解释时会参考最多 3 张相关旧卡片和个人偏好，不上传整库。
+- **词库分支**：可在 App 内切换不同知识空间，卡片、搜索、知识视图和 AI 记忆按当前词库隔离。
 - **多模型路由**：普通解释、专家审阅、后台整理可以按任务选择不同 provider / model。
 - **知识视图**：按强化学习、机器人控制、仿真评测、GMR / retargeting 等视角浏览卡片。
 - **标签整理**：可用本地规则或 DeepSeek flash 合并相似标签，保留一词多标签。
@@ -42,9 +43,19 @@ http://127.0.0.1:5173/
 
 - 新增、编辑、删除术语卡片
 - 字段保持轻量：`术语`、`标签`、`工作上下文`、`正文`
+- 每张卡都属于一个词库分支；旧卡片会自动归入 `深度学习/机器人`
 - 旧版多字段卡片会在读取和导入时自动合并进正文
 - 支持一组术语卡片，例如 `native validation / deterministic seed / stochastic`
 - 搜索范围包含术语、正文、工作上下文、标签、provider 和 model
+
+### 词库分支
+
+词库分支是产品内的数据空间，不是 Git branch。默认分支：
+
+- `深度学习/机器人`：深度学习、强化学习、机器人控制、仿真评测、GMR、motion retargeting、policy rollout、debug。
+- `量化/期货`：默认按新手学习口吻解释量化交易、期货合约、因子/信号、回测与执行、风险管理、统计与时间序列、市场微观结构。
+
+切换词库后，搜索、标签筛选、知识视图、相关卡片和 AI 记忆只使用当前词库的卡片。侧边栏也提供“全部词库”搜索入口，方便临时跨分支查找。Provider、API Key 和模型配置是全局共享的；每个词库单独保存个人偏好和默认工作上下文。
 
 ### Markdown 与公式
 
@@ -90,7 +101,7 @@ AI 解释会生成 JSON 外壳，方便提取字段；其中 `body` 是可直接
 
 词库页支持“知识视图 / 全部卡片”切换。知识视图第一版完全本地计算，不调用 AI：
 
-- 固定视图覆盖强化学习、机器人控制、仿真评测、Retargeting / GMR、Policy / Rollout、数学与优化、Debug。
+- 固定视图会随当前词库切换：深度学习/机器人词库覆盖强化学习、机器人控制、仿真评测、Retargeting / GMR、Policy / Rollout、数学与优化、Debug；量化/期货词库覆盖量化交易、期货合约、因子/信号、回测与执行、风险管理、统计与时间序列、市场微观结构。
 - 高频标签会自动补充成动态视图；同一张卡可以出现在多个视图里。
 - 打开卡片时，正文下方会按术语、共同标签、上下文和正文关键词推荐相关卡片。
 - 相关卡片只用于阅读跳转，不修改卡片正文、标签或同步数据。
@@ -162,11 +173,12 @@ WORDMEM_DB_PATH="data/wordmem.sqlite"
 | --- | --- | --- |
 | `WORDMEM_SYNC_TOKEN` | 推荐 | 同步 API 的 Bearer token |
 | `WORDMEM_DATA_KEY` | 后端保存 API Key 时必填 | AES-256-GCM 加密密钥 |
-| `WORDMEM_TRUSTED_SYNC` | 可选 | 私有网络内自动信任当前后端，不需要每个浏览器手动填 token |
+| `WORDMEM_TRUSTED_SYNC` | 可选 | 私有网络内信任当前后端，不需要每个浏览器手动填 token；前端仍默认手动同步 |
 | `WORDMEM_DB_PATH` | 可选 | SQLite 文件路径，默认 `data/wordmem.sqlite` |
 | `WORDMEM_BXI_API_KEY` | 可选 | 后端环境变量 provider key |
 | `WORDMEM_DEEPSEEK_API_KEY` | 可选 | 后端环境变量 provider key |
 | `VITE_WORDMEM_DEFAULT_BACKEND_URL` | 可选 | 打包时写入默认后端地址，例如 Tailscale URL |
+| `VITE_WORDMEM_DEFAULT_SYNC_TOKEN` | 可选 | 打包时写入默认同步 token，仅适合个人 APK / Tailscale 内网分发 |
 
 ### 同步接口
 
@@ -183,7 +195,9 @@ WORDMEM_DB_PATH="data/wordmem.sqlite"
 Authorization: Bearer <WORDMEM_SYNC_TOKEN>
 ```
 
-如果启用 `WORDMEM_TRUSTED_SYNC=1`，后端会允许同一私有网络内的 WordMem 前端自动同步。这个模式只适合 Tailscale、局域网或其他可信私有网络，不建议直接暴露公网。
+WordMem 前端默认本地优先：启动、保存、删除和导入都只写当前设备的 IndexedDB，不会主动访问后端。需要多设备同步时，在设置页手动点击“拉取后端”或“手动同步”，这时才需要 Tailscale 能连到后端。
+
+如果启用 `WORDMEM_TRUSTED_SYNC=1`，后端会允许同一私有网络内的 WordMem 前端免填 token 调用同步接口。这个模式只适合 Tailscale、局域网或其他可信私有网络，不建议直接暴露公网。
 
 ## 多设备访问
 

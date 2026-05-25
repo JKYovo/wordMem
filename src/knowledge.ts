@@ -1,4 +1,5 @@
 import type { KnowledgeCard } from "./types";
+import { QUANT_LIBRARY_ID } from "./defaults";
 
 export type KnowledgeView = {
   id: string;
@@ -46,7 +47,7 @@ const STOP_WORDS = new Set([
   "因为",
 ]);
 
-const FIXED_VIEWS: ViewDefinition[] = [
+const ML_ROBOTICS_VIEWS: ViewDefinition[] = [
   {
     id: "rl",
     title: "强化学习",
@@ -98,6 +99,58 @@ const FIXED_VIEWS: ViewDefinition[] = [
   },
 ];
 
+const QUANT_FUTURES_VIEWS: ViewDefinition[] = [
+  {
+    id: "quant-trading",
+    title: "量化交易",
+    description: "策略、信号、交易系统、收益归因和研究流程",
+    tags: ["量化交易", "quant", "quant trading", "strategy", "signal"],
+    keywords: ["quant", "strategy", "signal", "alpha", "portfolio", "收益", "策略", "信号"],
+  },
+  {
+    id: "futures-contracts",
+    title: "期货合约",
+    description: "合约、交割、保证金、主力连续、基差和展期",
+    tags: ["期货", "futures", "合约", "保证金", "基差"],
+    keywords: ["futures", "contract", "margin", "basis", "rollover", "delivery", "主力", "展期"],
+  },
+  {
+    id: "factor-signal",
+    title: "因子 / 信号",
+    description: "因子构造、特征、IC、alpha、预测和信号衰减",
+    tags: ["因子", "信号", "factor", "alpha", "feature"],
+    keywords: ["factor", "alpha", "feature", "ic", "rank ic", "decay", "signal"],
+  },
+  {
+    id: "backtest-execution",
+    title: "回测与执行",
+    description: "回测、撮合、滑点、手续费、成交和订单执行",
+    tags: ["回测", "执行", "backtest", "execution", "slippage"],
+    keywords: ["backtest", "execution", "slippage", "commission", "fill", "order", "成交"],
+  },
+  {
+    id: "risk-position",
+    title: "风险管理",
+    description: "仓位、杠杆、回撤、VaR、止损和风控约束",
+    tags: ["风险管理", "风控", "仓位", "risk", "position"],
+    keywords: ["risk", "position", "drawdown", "leverage", "var", "stop loss", "仓位", "回撤"],
+  },
+  {
+    id: "stats-timeseries",
+    title: "统计与时间序列",
+    description: "统计检验、时间序列、协整、波动率和分布",
+    tags: ["统计", "时间序列", "statistics", "time series", "volatility"],
+    keywords: ["statistics", "time series", "volatility", "stationary", "cointegration", "acf", "pacf"],
+  },
+  {
+    id: "market-microstructure",
+    title: "市场微观结构",
+    description: "盘口、订单簿、买卖价差、流动性和成交机制",
+    tags: ["市场微观结构", "盘口", "order book", "liquidity", "spread"],
+    keywords: ["order book", "bid", "ask", "spread", "liquidity", "volume", "盘口", "流动性"],
+  },
+];
+
 const TAG_ALIASES: Record<string, string> = {
   rl: "强化学习",
   "reinforcement learning": "强化学习",
@@ -115,6 +168,20 @@ const TAG_ALIASES: Record<string, string> = {
   重定向: "motion retargeting",
   gmr: "GMR",
   ppo: "PPO",
+  quant: "量化交易",
+  "quant trading": "量化交易",
+  futures: "期货",
+  future: "期货",
+  factor: "因子",
+  alpha: "alpha",
+  signal: "信号",
+  backtest: "回测",
+  execution: "执行",
+  risk: "风险管理",
+  position: "仓位",
+  "time series": "时间序列",
+  "order book": "盘口",
+  liquidity: "流动性",
 };
 
 function normalize(value: string) {
@@ -167,8 +234,13 @@ function uniqueTags(tags: string[]) {
   return Array.from(new Set(tags.map(canonicalTag).map((tag) => tag.trim()).filter(Boolean)));
 }
 
-export function buildKnowledgeViews(cards: KnowledgeCard[]): KnowledgeView[] {
-  const fixedViews = FIXED_VIEWS.map((definition) => {
+function fixedViewsForLibrary(libraryId?: string) {
+  return libraryId === QUANT_LIBRARY_ID ? QUANT_FUTURES_VIEWS : ML_ROBOTICS_VIEWS;
+}
+
+export function buildKnowledgeViews(cards: KnowledgeCard[], libraryId?: string): KnowledgeView[] {
+  const fixedDefinitions = fixedViewsForLibrary(libraryId);
+  const fixedViews = fixedDefinitions.map((definition) => {
     const viewCards = sortByUpdated(cards.filter((card) => matchesView(card, definition)));
     return {
       id: definition.id,
@@ -181,7 +253,7 @@ export function buildKnowledgeViews(cards: KnowledgeCard[]): KnowledgeView[] {
   });
 
   const fixedTagKeys = new Set(
-    FIXED_VIEWS.flatMap((view) => view.tags).map(canonicalTag).map(normalize)
+    fixedDefinitions.flatMap((view) => view.tags).map(canonicalTag).map(normalize)
   );
   const tagStats = new Map<string, { tag: string; cards: KnowledgeCard[] }>();
 
